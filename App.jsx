@@ -763,11 +763,22 @@ function ProfileModal({ candidate: init, onClose, onFindSimilar }) {
   const [editForm, setEditForm] = useState({ phone: c.phone || "", location: c.location || "", recruiter_notes: c.recruiter_notes || "" });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [projects,     setProjects]     = useState([]);
+  const [showProjDrop, setShowProjDrop] = useState(false);
+  const [addingToProj, setAddingToProj] = useState(null);
+  const [addedToProj,  setAddedToProj]  = useState(null);
   const isMobile = useIsMobile();
   if (!c) return null;
   const meta = c.metadata_json || {};
   const knownKeys = ["all_designations", "functions", "companies", "education", "certifications", "languages", "academic_institutions"];
   const extraKeys = Object.keys(meta).filter(k => !knownKeys.includes(k) && meta[k]);
+
+  useEffect(() => {
+    apiFetch("/api/v1/projects?archived=false")
+      .then(r => r.json())
+      .then(d => setProjects(d.projects || []))
+      .catch(() => {});
+  }, []);
 
   const Section = ({ title, children }) => (
     <div style={{ marginTop: "16px" }}>
@@ -794,6 +805,19 @@ function ProfileModal({ candidate: init, onClose, onFindSimilar }) {
     } catch { setSaveMsg("Error"); } finally { setSaving(false); }
   };
 
+  const addToProject = async (projectId) => {
+    setAddingToProj(projectId);
+    try {
+      await apiFetch(`/api/v1/projects/${projectId}/candidates/${c.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "add", action_source: "manual_add" }),
+      });
+      setAddedToProj(projectId);
+      setShowProjDrop(false);
+    } catch { }
+    finally { setAddingToProj(null); }
+  };
+
   return (
     <div style={{ ...S.modal, alignItems: isMobile ? "flex-end" : "center", padding: isMobile ? "0" : "16px" }} onClick={onClose}>
       <div style={{ ...S.modalWrap, maxWidth: isMobile ? "100%" : "720px", width: "100%",
@@ -807,7 +831,7 @@ function ProfileModal({ candidate: init, onClose, onFindSimilar }) {
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.72)" }}>{c.current_designation || "No designation"}{c.current_company ? ` · ${c.current_company}` : ""}</div>
             </div>
             <div style={{ display: "flex", gap: "7px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              {/* Find Similar button — amber/gold */}
+              {/* Find Similar button */}
               <button className="similar-btn"
                 onClick={() => { onClose(); openSimilarWindow(c); }}
                 style={{ padding: "6px 12px", borderRadius: "8px", border: "none", cursor: "pointer",
@@ -815,6 +839,44 @@ function ProfileModal({ candidate: init, onClose, onFindSimilar }) {
                   display: "flex", alignItems: "center", gap: "5px" }}>
                 <Icon n="hub" size={14} />Find Similar
               </button>
+              {/* Add to Project button */}
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => { setShowProjDrop(p => !p); setAddedToProj(null); }}
+                  style={{ padding: "6px 12px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.3)",
+                    cursor: "pointer", fontSize: "12px", fontWeight: "600",
+                    backgroundColor: addedToProj ? "rgba(59,178,115,0.35)" : "rgba(255,255,255,0.15)",
+                    color: "#fff", display: "flex", alignItems: "center", gap: "5px" }}>
+                  <Icon n={addedToProj ? "check" : "work"} size={14} />
+                  {addedToProj ? "Added!" : "Add to Project"}
+                </button>
+                {showProjDrop && (
+                  <div style={{ position: "absolute", top: "110%", right: 0, zIndex: 200,
+                    backgroundColor: C.white, border: `1px solid ${C.border}`,
+                    borderRadius: "10px", boxShadow: "0 8px 24px rgba(98,100,244,0.14)",
+                    minWidth: "230px", overflow: "hidden" }}>
+                    {projects.length === 0 ? (
+                      <div style={{ padding: "12px 14px", fontSize: "13px", color: C.muted }}>
+                        No active projects
+                      </div>
+                    ) : projects.map(p => (
+                      <button key={p.id}
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                          width: "100%", padding: "10px 14px", border: "none", background: "none",
+                          cursor: "pointer", fontSize: "13px", color: C.text, textAlign: "left",
+                          borderBottom: `1px solid ${C.border}` }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}
+                        onClick={() => addToProject(p.id)}
+                        disabled={addingToProj === p.id}>
+                        <span>{p.title}</span>
+                        {addingToProj === p.id && <Icon n="sync" size={14} color={C.muted} />}
+                        {addedToProj === p.id  && <Icon n="check" size={14} color={C.success} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {c.cv_storage_url && (
                 <a href={c.cv_storage_url} target="_blank" rel="noreferrer"
                   style={{ padding: "6px 12px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.3)", fontSize: "12px", fontWeight: "600", backgroundColor: "rgba(255,255,255,0.15)", color: "#fff", display: "flex", alignItems: "center", gap: "5px", textDecoration: "none" }}>
@@ -2333,11 +2395,15 @@ function ApplyPage({ slug }) {
 // ─── PROJECTS TAB ─────────────────────────────────────────────────────────────
 function ProjectsTab({ onViewCandidate }) {
   const isMobile = useIsMobile();
-  const [view,         setView]     = useState("list");
-  const [projects,     setProjects] = useState([]);
-  const [selProject,   setSel]      = useState(null);
-  const [showArchived, setShowArc]  = useState(false);
-  const [loading,      setLoading]  = useState(false);
+  const [view,           setView]     = useState("list");
+  const [projects,       setProjects] = useState([]);
+  const [selProject,     setSel]      = useState(null);
+  const [showArchived,   setShowArc]  = useState(false);
+  const [loading,        setLoading]  = useState(false);
+  const [editingProject, setEditingProject] = useState(null);
+  const [noteVal,        setNoteVal]        = useState("");
+  const [noteSaving,     setNoteSaving]     = useState(false);
+  const [noteMsg,        setNoteMsg]        = useState("");
 
   const fetchProjects = useCallback(async (archived) => {
     setLoading(true);
@@ -2349,6 +2415,24 @@ function ProjectsTab({ onViewCandidate }) {
   }, []);
 
   useEffect(() => { fetchProjects(showArchived); }, [showArchived]);
+
+  const saveNote = async () => {
+    setNoteSaving(true); setNoteMsg("");
+    try {
+      const r = await apiFetch(`/api/v1/projects/${editingProject.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ client_note: noteVal.trim() || null }),
+      });
+      if (r.ok) {
+        setNoteMsg("saved");
+        fetchProjects(showArchived);
+        setTimeout(() => { setEditingProject(null); setNoteMsg(""); }, 1500);
+      } else {
+        setNoteMsg("error");
+      }
+    } catch { setNoteMsg("error"); }
+    finally { setNoteSaving(false); }
+  };
 
   if (view === "create")
     return <CreateProjectModal onCreated={() => { fetchProjects(showArchived); setView("list"); }} onCancel={() => setView("list")} />;
@@ -2435,13 +2519,84 @@ function ProjectsTab({ onViewCandidate }) {
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "11px", color: C.muted }}>{fmtDate(p.last_activity_at || p.created_at)}</span>
-              {p.apply_enabled && !p.is_archived
-                ? <span style={S.badge("info")}>Apply Link On</span>
-                : <span style={S.badge("")}>Link Off</span>}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {!p.is_archived && (
+                  <button
+                    style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
+                      color: C.muted, display: "flex", alignItems: "center", borderRadius: "6px" }}
+                    title="Edit recruiter note"
+                    onClick={e => {
+                      e.stopPropagation();
+                      setEditingProject(p);
+                      setNoteVal(p.client_note || "");
+                      setNoteMsg("");
+                    }}>
+                    <Icon n="edit_note" size={16} />
+                  </button>
+                )}
+                {p.apply_enabled && !p.is_archived
+                  ? <span style={S.badge("info")}>Apply Link On</span>
+                  : <span style={S.badge("")}>Link Off</span>}
+              </div>
             </div>
           </div>
         ))}
       </div>
+
+      {/* Edit Recruiter Note Modal */}
+      {editingProject && (
+        <div style={S.modal} onClick={() => setEditingProject(null)}>
+          <div style={{ ...S.modalWrap, maxWidth: "500px" }} onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div>
+                <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "15px" }}>
+                  Edit Recruiter Note
+                </div>
+                <div style={{ fontSize: "12px", color: C.muted, marginTop: "2px" }}>
+                  {editingProject.title}
+                </div>
+              </div>
+              <button style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
+                onClick={() => setEditingProject(null)}>
+                <Icon n="close" size={20} />
+              </button>
+            </div>
+            <div style={S.modalBody}>
+              <div style={S.label}>
+                Recruiter / Client Note
+                <span style={{ fontWeight: "400", textTransform: "none", letterSpacing: 0,
+                  color: C.muted, marginLeft: "6px" }}>internal only · improves matching</span>
+              </div>
+              <textarea
+                style={{ ...S.input, resize: "vertical", minHeight: "100px" }}
+                placeholder="e.g. Client prefers ex-BFSI background. NGO experience a plus. Avoid notice > 60 days."
+                value={noteVal}
+                onChange={e => setNoteVal(e.target.value)}
+              />
+              {noteMsg === "saved" && (
+                <div style={{ fontSize: "12px", color: C.success, marginTop: "8px" }}>
+                  ✓ Saved — re-run Match on this project to apply changes
+                </div>
+              )}
+              {noteMsg === "error" && (
+                <div style={{ fontSize: "12px", color: C.error, marginTop: "8px" }}>
+                  Failed to save. Please try again.
+                </div>
+              )}
+            </div>
+            <div style={S.modalFoot}>
+              <button style={{ ...S.btn("primary"), opacity: noteSaving ? 0.6 : 1 }}
+                onClick={saveNote} disabled={noteSaving}>
+                <Icon n="save" size={14} />{noteSaving ? "Saving…" : "Save Note"}
+              </button>
+              <button style={S.btn("outline")}
+                onClick={() => setEditingProject(null)} disabled={noteSaving}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
