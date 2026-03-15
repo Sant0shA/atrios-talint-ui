@@ -2679,6 +2679,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const [matchMsg,   setMatchMsg]   = useState("");
   const [copiedLink, setCopied]     = useState(false);
   const [poolTab,    setPoolTab]    = useState('matched');
+  const [showReport, setShowReport] = useState(false);
 
   const applyUrl = `${window.location.origin}/apply/${project.apply_slug}`;
 
@@ -2752,7 +2753,11 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
 
   const matchedCandidates = candidates.filter(c => c.source !== 'apply_link');
   const appliedCandidates = candidates.filter(c => c.source === 'apply_link');
+  const shortlistedCandidates = candidates.filter(c => c.source === 'apply_link_add' && c.is_active);
   const displayCandidates = poolTab === 'matched' ? matchedCandidates : appliedCandidates;
+
+  // Report is available if there are any active matched candidates
+  const reportAvailable = matchedCandidates.filter(c => c.is_active).length > 0;
 
   return (
     <div>
@@ -2767,12 +2772,21 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             {project.last_matched_at && ` · Last matched ${fmtDate(project.last_matched_at)}`}
           </div>
         </div>
-        <button
-          style={{ ...S.btn(matching || project.is_archived ? "outline" : "primary", true),
-            opacity: matching || project.is_archived ? 0.5 : 1 }}
-          onClick={runMatch} disabled={matching || project.is_archived}>
-          <Icon n="hub" size={13} />{matching ? "Matching…" : "Run Match"}
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          {reportAvailable && !project.is_archived && (
+            <button
+              style={S.btn("outline", true)}
+              onClick={() => setShowReport(true)}>
+              <Icon n="summarize" size={13} />Generate Report
+            </button>
+          )}
+          <button
+            style={{ ...S.btn(matching || project.is_archived ? "outline" : "primary", true),
+              opacity: matching || project.is_archived ? 0.5 : 1 }}
+            onClick={runMatch} disabled={matching || project.is_archived}>
+            <Icon n="hub" size={13} />{matching ? "Matching…" : "Run Match"}
+          </button>
+        </div>
       </div>
 
       {matchMsg && (
@@ -2889,7 +2903,6 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                     style={{ opacity: c.is_active ? 1 : 0.4 }}
                     onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
                     onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>
-                    {/* Match score — large coloured number */}
                     <td style={{ ...S.td, width: "60px", textAlign: "center" }}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
@@ -2901,22 +2914,15 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                         </div>
                       ) : <span style={{ fontSize: "13px", color: C.muted }}>—</span>}
                     </td>
-                    {/* Name + company */}
                     <td style={S.td}>
                       <div style={{ fontWeight: "700" }}>{c.name || "—"}</div>
                       <div style={{ fontSize: "11px", color: C.muted }}>{c.current_company || "—"}</div>
                     </td>
-                    {/* Designation */}
-                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid }}>
-                      {c.current_designation || "—"}
-                    </td>
-                    {/* Exp */}
+                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid }}>{c.current_designation || "—"}</td>
                     <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
                       {c.total_experience != null ? `${c.total_experience}y` : "—"}
                     </td>
-                    {/* Location */}
                     <td style={{ ...S.td, color: C.muted, fontSize: "12px" }}>{c.location || "—"}</td>
-                    {/* Score breakdown pills */}
                     <td style={S.td}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
@@ -2926,9 +2932,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                         </div>
                       ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
                     </td>
-                    {/* Source */}
                     <td style={S.td}><span style={S.badge(badge.type)}>{badge.label}</span></td>
-                    {/* Actions */}
                     <td style={S.td}>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                         <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
@@ -2950,6 +2954,619 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
           </table>
         </div>
       )}
+
+      {/* Generate Report Modal */}
+      {showReport && (
+        <GenerateReportModal
+          project={project}
+          allCandidates={candidates}
+          matchedCandidates={matchedCandidates.filter(c => c.is_active)}
+          shortlistedCandidates={shortlistedCandidates}
+          onClose={() => setShowReport(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── GENERATE REPORT MODAL ────────────────────────────────────────────────────
+function GenerateReportModal({ project, allCandidates, matchedCandidates, shortlistedCandidates, onClose }) {
+  const [step,          setStep]          = useState('type');
+  const [reportType,    setReportType]    = useState(null);
+  const [clientName,    setClientName]    = useState("");
+  const [contextNote,   setContextNote]   = useState(project.client_note || "");
+  const [recruiterNote, setRecruiterNote] = useState("");
+  const [clientNameErr, setClientNameErr] = useState("");
+  const [progress,      setProgress]      = useState([]);
+  const [reportPayload, setReportPayload] = useState(null);
+
+  const user = getUser();
+  const candidatesForReport = reportType === 'shortlist' ? shortlistedCandidates : matchedCandidates;
+  const reportTitle = reportType === 'shortlist'
+    ? `Applied Candidate Shortlist — ${project.title}`
+    : `Candidate Matched Report — ${project.title}`;
+  const appliedCount = allCandidates.filter(c =>
+    (c.source === 'apply_link' || c.source === 'apply_link_add') && c.is_active
+  ).length;
+  const promotedCount = shortlistedCandidates.length;
+
+  const selectType = (type) => { setReportType(type); setStep('details'); };
+
+  const goToNotes = () => {
+    if (!clientName.trim()) { setClientNameErr("Client name is required"); return; }
+    setClientNameErr("");
+    setStep('notes');
+  };
+
+  const generate = async () => {
+    setStep('generating');
+    const candidates = candidatesForReport;
+    const progressSteps = [
+      { label: "Fetching full candidate profiles", done: false },
+      { label: "Generating AI assessments", done: false },
+      { label: "Assembling report", done: false },
+    ];
+    setProgress(progressSteps.map(s => ({ ...s })));
+
+    try {
+      // Step 1: fetch full profiles
+      const fullProfiles = await Promise.all(
+        candidates.map(async c => {
+          try {
+            const r = await apiFetch(`/api/v1/candidates/${c.candidate_id}`);
+            return await r.json();
+          } catch { return null; }
+        })
+      );
+      setProgress(p => p.map((s, i) => i === 0 ? { ...s, done: true } : s));
+
+      // Step 2: parse recruiter notes using --- delimiter
+      // Format: "Name\ncontent\n---\nName\ncontent"
+      const noteMap = {};
+      if (recruiterNote.trim()) {
+        const blocks = recruiterNote.split(/\n?---\n?/).map(b => b.trim()).filter(Boolean);
+        for (const block of blocks) {
+          const lines = block.split('\n');
+          const nameLine = lines[0].trim();
+          const content = lines.slice(1).join('\n').trim();
+          for (const cand of candidates) {
+            const fn = (cand.name || "").split(" ")[0];
+            if (fn && nameLine.toLowerCase().includes(fn.toLowerCase())) {
+              noteMap[cand.candidate_id] = content;
+              break;
+            }
+          }
+        }
+      }
+
+      // Step 3: generate assessments
+      const assessments = {};
+      await Promise.all(
+        candidates.map(async (c, idx) => {
+          const full = fullProfiles[idx];
+          if (!full) { assessments[c.candidate_id] = { recruiter_summary: "", talint_assessment: "" }; return; }
+
+          const firstName = (full.name || "").split(" ")[0];
+
+          // Recruiter note: use --- delimited block matching this candidate's name
+          const recruiterSummary = noteMap[c.candidate_id] || "";
+
+          // Talint assessment: /briefing endpoint, strip markdown, first paragraph only
+          let talintAssessment = "";
+          try {
+            const r = await apiFetch(
+              `/api/v1/projects/${project.id}/candidates/${c.candidate_id}/briefing`,
+              { method: "POST" }
+            );
+            const d = await r.json();
+            const raw = d.briefing || "";
+            // Strip all markdown formatting
+            const cleaned = raw
+              .replace(/^#{1,3}\s+/gm, '')
+              .replace(/\*\*(.*?)\*\*/g, "$1")
+              .replace(/\*(.*?)\*/g, "$1")
+              .trim();
+            // Find first paragraph that is not just a section label
+            const sectionLabel = /^(summary|strengths|match rationale|development areas)[:\s]*/i;
+            const paragraphs = cleaned.split(/\n\n+/);
+            const firstReal = paragraphs.find(p => !sectionLabel.test(p.trim())) || paragraphs[0] || "";
+            talintAssessment = firstReal.replace(sectionLabel, '').trim();
+          } catch { talintAssessment = ""; }
+
+          assessments[c.candidate_id] = { recruiter_summary: recruiterSummary, talint_assessment: talintAssessment };
+        })
+      );
+      setProgress(p => p.map((s, i) => i === 1 ? { ...s, done: true } : s));
+
+      // Step 3: assemble payload
+      const scores = candidates.map(c => c.match_score).filter(Boolean);
+      const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+
+      const payload = {
+        report_type:    reportType,
+        report_title:   reportTitle,
+        generated_at:   new Date().toISOString(),
+        client_name:    clientName.trim(),
+        recruiter_name: user?.username || "ATRIOS",
+        project: {
+          id: project.id, title: project.title,
+          created_at: project.created_at, last_matched_at: project.last_matched_at,
+        },
+        summary: {
+          total_applied:     appliedCount,
+          total_shortlisted: promotedCount,
+          total_in_report:   candidates.length,
+          avg_match_score:   Math.round(avgScore * 100),
+          strong:   scores.filter(s => s >= 0.7).length,
+          moderate: scores.filter(s => s >= 0.5 && s < 0.7).length,
+          weak:     scores.filter(s => s < 0.5).length,
+        },
+        candidates: candidates.map((c, idx) => ({
+          ...c,
+          ...fullProfiles[idx],
+          recruiter_summary: assessments[c.candidate_id]?.recruiter_summary || "",
+          talint_assessment: assessments[c.candidate_id]?.talint_assessment || "",
+        })),
+      };
+
+      setProgress(p => p.map((s, i) => i === 2 ? { ...s, done: true } : s));
+      setReportPayload(payload);
+      setStep('done');
+
+    } catch (err) {
+      setStep('details');
+    }
+  };
+
+  // Write to localStorage then open new window — retry loop in ReportPrintView handles timing
+  const printReport = () => {
+    const key = `talint_report_${project.id}_${Date.now()}`;
+    localStorage.setItem(key, JSON.stringify(reportPayload));
+    const url = `${window.location.origin}${window.location.pathname}#report?key=${key}`;
+    window.open(url, `report_${project.id}`, "width=900,height=1100,scrollbars=yes,resizable=yes");
+  };
+
+  const typeCard = (type, icon, title, subtitle, count, countLabel) => (
+    <div
+      onClick={() => count > 0 && selectType(type)}
+      style={{
+        border: `2px solid ${count > 0 ? C.borderMid : C.border}`,
+        borderRadius: "12px", padding: "18px 20px", cursor: count > 0 ? "pointer" : "not-allowed",
+        opacity: count > 0 ? 1 : 0.45, transition: "all 0.15s", marginBottom: "10px",
+        backgroundColor: C.white,
+      }}
+      onMouseEnter={e => { if (count > 0) { e.currentTarget.style.borderColor = C.primary; e.currentTarget.style.backgroundColor = C.primaryLight; } }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = count > 0 ? C.borderMid : C.border; e.currentTarget.style.backgroundColor = C.white; }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "14px" }}>
+        <div style={{ width: "38px", height: "38px", borderRadius: "10px", backgroundColor: C.primaryDim,
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon n={icon} size={20} color={C.primary} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH, color: C.text, marginBottom: "3px" }}>{title}</div>
+          <div style={{ fontSize: "12px", color: C.muted, lineHeight: "1.5" }}>{subtitle}</div>
+          <div style={{ marginTop: "8px" }}>
+            <span style={{ ...S.badge(count > 0 ? "admin" : ""), fontSize: "11px" }}>
+              {count} {countLabel}
+            </span>
+          </div>
+        </div>
+        {count > 0 && <Icon n="chevron_right" size={20} color={C.muted} />}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={S.modal} onClick={onClose}>
+      <div style={{ ...S.modalWrap, maxWidth: "520px" }} onClick={e => e.stopPropagation()}>
+
+        <div style={S.modalHead}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {step !== 'type' && step !== 'done' && (
+              <button style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, display: "flex", padding: "2px" }}
+                onClick={() => setStep(step === 'details' ? 'type' : step === 'notes' ? 'details' : 'type')}>
+                <Icon n="arrow_back" size={18} />
+              </button>
+            )}
+            <div>
+              <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "15px" }}>
+                {step === 'type'       && "Generate Report"}
+                {step === 'details'    && (reportType === 'shortlist' ? "Applied Shortlist Report" : "Full Matched Pool Report")}
+                {step === 'notes'      && "Recruiter Notes"}
+                {step === 'generating' && "Generating Report…"}
+                {step === 'done'       && "Report Ready"}
+              </div>
+              {step !== 'type' && (
+                <div style={{ fontSize: "11px", color: C.muted, marginTop: "1px" }}>{project.title}</div>
+              )}
+            </div>
+          </div>
+          <button style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }} onClick={onClose}>
+            <Icon n="close" size={20} />
+          </button>
+        </div>
+
+        <div style={S.modalBody}>
+
+          {step === 'type' && (
+            <div>
+              <div style={{ fontSize: "13px", color: C.muted, marginBottom: "16px" }}>
+                Choose the type of report to generate for this project.
+              </div>
+              {typeCard('shortlist', 'how_to_reg', 'Applied Shortlist Report',
+                'Candidates who applied via link and were promoted by your team. For clients evaluating your application sorting service.',
+                promotedCount, `promoted candidate${promotedCount !== 1 ? 's' : ''}`)}
+              {typeCard('matched', 'groups', 'Full Matched Pool Report',
+                'All active candidates in the Matched tab — auto-matched, manually added, and promoted. For team use or full client briefings.',
+                matchedCandidates.length, `matched candidate${matchedCandidates.length !== 1 ? 's' : ''}`)}
+            </div>
+          )}
+
+          {step === 'details' && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={S.label}>Client Name *</label>
+                <input style={{ ...S.input, marginTop: "4px" }}
+                  placeholder="e.g. HDFC Bank, Teach For India"
+                  value={clientName}
+                  onChange={e => { setClientName(e.target.value); setClientNameErr(""); }} />
+                {clientNameErr && <div style={{ fontSize: "12px", color: C.error, marginTop: "4px" }}>{clientNameErr}</div>}
+              </div>
+              <div>
+                <label style={S.label}>
+                  Project Context Note
+                  <span style={{ fontWeight: "400", textTransform: "none", letterSpacing: 0, color: C.muted, marginLeft: "6px" }}>internal only · not printed</span>
+                </label>
+                <textarea style={{ ...S.input, resize: "vertical", minHeight: "80px", marginTop: "4px" }}
+                  placeholder="e.g. Client prefers NGO background. Budget is ₹25L max."
+                  value={contextNote} onChange={e => setContextNote(e.target.value)} />
+              </div>
+              <div style={{ backgroundColor: C.surface, borderRadius: "10px", padding: "12px 14px" }}>
+                <div style={S.label}>Candidates included ({candidatesForReport.length})</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "6px" }}>
+                  {candidatesForReport.slice(0, 6).map(c => (
+                    <div key={c.candidate_id} style={{ display: "flex", alignItems: "center" }}>
+                      <span style={{ fontSize: "13px", fontWeight: "600", color: C.text }}>{c.name || "—"}</span>
+                      <span style={{ fontSize: "12px", color: C.muted, marginLeft: "6px" }}>{c.current_designation || ""}</span>
+                    </div>
+                  ))}
+                  {candidatesForReport.length > 6 && <div style={{ fontSize: "12px", color: C.muted }}>+{candidatesForReport.length - 6} more</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 'notes' && (
+            <div>
+              <div style={{ fontSize: "13px", color: C.muted, marginBottom: "12px", lineHeight: "1.6" }}>
+                Add notes per candidate. Start each section with the candidate name, then their note. Separate candidates with a line containing only <strong>---</strong>
+              </div>
+              <label style={S.label}>Free-format notes</label>
+              <textarea
+                style={{ ...S.input, resize: "vertical", minHeight: "130px", marginTop: "4px" }}
+                placeholder={`Prachi Jain\nSenior leader with 25 years experience. CTC 31L. Notice 60 days. Open to relocate.\n---\nArooje Sajjad\nGrant management expert. Contract ending Mar 2026. CTC 40L. Notice 30 days.\n---\nMyron Anthony\nStrong global profile. Can join immediately. CTC 32L.`}
+                value={recruiterNote} onChange={e => setRecruiterNote(e.target.value)} />
+              <div style={{ fontSize: "11px", color: C.muted, marginTop: "6px" }}>
+                Use <strong>---</strong> on its own line to separate candidates · Leave blank to skip recruiter notes
+              </div>
+            </div>
+          )}
+
+          {step === 'generating' && (
+            <div style={{ padding: "8px 0" }}>
+              {progress.map((s, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0",
+                  borderBottom: i < progress.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                  {s.done ? (
+                    <div style={{ width: "22px", height: "22px", borderRadius: "50%", backgroundColor: C.successLight,
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Icon n="check" size={14} color={C.success} />
+                    </div>
+                  ) : (
+                    <div style={{ width: "22px", height: "22px", borderRadius: "50%",
+                      border: `2px solid ${C.primary}`, borderTopColor: "transparent",
+                      animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                  )}
+                  <span style={{ fontSize: "13px", color: s.done ? C.muted : C.text, fontWeight: s.done ? "400" : "600" }}>
+                    {s.label}
+                  </span>
+                </div>
+              ))}
+              <div style={{ fontSize: "12px", color: C.muted, marginTop: "16px", textAlign: "center" }}>
+                Generating {candidatesForReport.length} AI assessment{candidatesForReport.length !== 1 ? "s" : ""}… this takes 10–20 seconds
+              </div>
+            </div>
+          )}
+
+          {step === 'done' && reportPayload && (
+            <div style={{ textAlign: "center", padding: "8px 0 16px" }}>
+              <div style={{ width: "56px", height: "56px", borderRadius: "50%", backgroundColor: C.successLight,
+                display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                <Icon n="check_circle" size={28} color={C.success} />
+              </div>
+              <div style={{ fontSize: "16px", fontWeight: "700", fontFamily: fontH, color: C.text, marginBottom: "6px" }}>
+                {reportType === 'shortlist' ? "Applied Shortlist Report" : "Full Matched Pool Report"}
+              </div>
+              <div style={{ fontSize: "13px", color: C.muted, marginBottom: "20px" }}>
+                {clientName} · {candidatesForReport.length} candidate{candidatesForReport.length !== 1 ? "s" : ""}
+              </div>
+              <button style={{ ...S.btn("primary"), justifyContent: "center", padding: "10px 28px" }} onClick={printReport}>
+                <Icon n="print" size={15} />Print / Save as PDF
+              </button>
+              <div style={{ fontSize: "11px", color: C.muted, marginTop: "10px" }}>
+                Opens in new window · File → Print → Save as PDF
+              </div>
+            </div>
+          )}
+        </div>
+
+        {(step === 'details' || step === 'notes') && (
+          <div style={S.modalFoot}>
+            {step === 'details' && (
+              <>
+                <button style={S.btn("primary")} onClick={goToNotes}>Next <Icon n="arrow_forward" size={14} /></button>
+                <button style={S.btn("outline")} onClick={() => setStep('type')}>Back</button>
+              </>
+            )}
+            {step === 'notes' && (
+              <>
+                <button style={S.btn("primary")} onClick={generate}><Icon n="auto_awesome" size={14} />Generate</button>
+                <button style={S.btn("outline")} onClick={() => setStep('details')}>Back</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── REPORT PRINT VIEW ────────────────────────────────────────────────────────
+// Renders at hash #report?key=... — reads payload from localStorage with retry loop
+function ReportPrintView() {
+  const [payload, setPayload] = useState(null);
+  const [error,   setError]   = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.replace("#report?", ""));
+    const key = params.get("key");
+    if (!key) { setError(true); return; }
+
+    // Retry every 100ms up to 2s — handles timing between parent write and new window read
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          clearInterval(interval);
+          setPayload(JSON.parse(raw));
+          localStorage.removeItem(key);
+          return;
+        }
+      } catch {
+        clearInterval(interval);
+        setError(true);
+        return;
+      }
+      if (attempts >= 20) { clearInterval(interval); setError(true); }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  if (error) return (
+    <div style={{ padding: "60px", textAlign: "center", fontFamily: "'DM Sans', sans-serif", color: "#8b8ab8" }}>
+      Report data could not be loaded.
+    </div>
+  );
+  if (!payload) return (
+    <div style={{ padding: "60px", textAlign: "center", fontFamily: "'DM Sans', sans-serif", color: "#8b8ab8" }}>
+      Loading…
+    </div>
+  );
+
+  const { report_title, client_name, recruiter_name, generated_at, project, summary, candidates } = payload;
+  const dateStr = new Date(generated_at).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+
+  const printStyles = `
+    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: #fff; color: #0f0f2d; }
+    .no-print { display: block; }
+    @media print {
+      .no-print { display: none !important; }
+      .page-break { page-break-before: always; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  `;
+
+  return (
+    <div style={{ fontFamily: "'DM Sans', sans-serif", backgroundColor: "#fff", minHeight: "100vh" }}>
+      <style>{printStyles}</style>
+
+      {/* Print button — hidden on print */}
+      <div className="no-print" style={{ position: "fixed", top: "16px", right: "16px", zIndex: 100 }}>
+        <button onClick={() => window.print()}
+          style={{ padding: "10px 20px", borderRadius: "10px", border: "none", cursor: "pointer",
+            backgroundColor: "#6264f4", color: "#fff", fontFamily: "'DM Sans', sans-serif",
+            fontSize: "13px", fontWeight: "600", display: "flex", alignItems: "center", gap: "6px",
+            boxShadow: "0 4px 12px rgba(98,100,244,0.25)" }}>
+          🖨 Print / Save as PDF
+        </button>
+      </div>
+
+      {/* ── COVER PAGE ── */}
+      <div style={{ maxWidth: "780px", margin: "0 auto", padding: "60px 48px 48px" }}>
+
+        {/* Header bar */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          paddingBottom: "20px", borderBottom: "3px solid #6264f4", marginBottom: "48px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ width: "40px", height: "40px", borderRadius: "10px", backgroundColor: "#6264f4",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: "'Sora', sans-serif", color: "#fff", fontSize: "20px", fontWeight: "800" }}>A</div>
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: "700", color: "#0f0f2d",
+                fontFamily: "'Sora', sans-serif", letterSpacing: "-0.01em" }}>ATRIOS</div>
+              <div style={{ fontSize: "10px", color: "#8b8ab8", textTransform: "uppercase",
+                letterSpacing: "0.1em" }}>Talent Intelligence</div>
+            </div>
+          </div>
+          <div style={{ fontSize: "11px", color: "#8b8ab8" }}>{dateStr}</div>
+        </div>
+
+        {/* Report type tag */}
+        <div style={{ display: "inline-block", padding: "4px 12px", borderRadius: "20px",
+          backgroundColor: "rgba(98,100,244,0.08)", color: "#6264f4",
+          fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.08em",
+          marginBottom: "16px" }}>
+          {payload.report_type === 'shortlist' ? "Applied Shortlist Report" : "Full Matched Pool Report"}
+        </div>
+
+        {/* Title */}
+        <div style={{ fontSize: "28px", fontWeight: "800", fontFamily: "'Sora', sans-serif",
+          color: "#0f0f2d", lineHeight: "1.2", letterSpacing: "-0.025em", marginBottom: "8px" }}>
+          {project.title}
+        </div>
+
+        {/* Client + Recruiter */}
+        <div style={{ fontSize: "15px", color: "#3d3d6b", marginBottom: "40px" }}>
+          Prepared for <strong>{client_name}</strong> · by {recruiter_name}
+        </div>
+
+        {/* Summary stats — 3 cards, no scores */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "48px" }}>
+          {[
+            { label: "Applied",     value: summary.total_applied,     color: "#6264f4" },
+            { label: "Shortlisted", value: summary.total_shortlisted,  color: "#3BB273" },
+            { label: "In Report",   value: summary.total_in_report,    color: "#0f0f2d" },
+          ].map(stat => (
+            <div key={stat.label} style={{ backgroundColor: "#f6f6f8", borderRadius: "12px", padding: "16px" }}>
+              <div style={{ fontSize: "28px", fontWeight: "800", fontFamily: "'Sora', sans-serif",
+                color: stat.color, marginBottom: "4px" }}>{stat.value}</div>
+              <div style={{ fontSize: "11px", color: "#8b8ab8", fontWeight: "600",
+                textTransform: "uppercase", letterSpacing: "0.08em" }}>{stat.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Candidate index */}
+        <div style={{ backgroundColor: "#f6f6f8", borderRadius: "12px", padding: "20px 24px" }}>
+          <div style={{ fontSize: "10px", fontWeight: "700", color: "#8b8ab8",
+            textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "14px" }}>
+            Candidates in this report
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {candidates.map((c, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <span style={{ fontSize: "11px", color: "#c4b8e0", fontWeight: "700", minWidth: "20px" }}>
+                  {String(idx + 1).padStart(2, "0")}
+                </span>
+                <span style={{ fontSize: "13px", fontWeight: "600", color: "#0f0f2d" }}>{c.name || "—"}</span>
+                <span style={{ fontSize: "12px", color: "#8b8ab8" }}>
+                  {c.current_designation || ""}
+                  {c.current_company ? ` · ${c.current_company}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── CANDIDATE PROFILES ── */}
+      {candidates.map((c, idx) => (
+        <div key={c.candidate_id || idx} className="page-break"
+          style={{ maxWidth: "780px", margin: "0 auto", padding: "48px 48px 40px" }}>
+
+          {/* Candidate header */}
+          <div style={{ paddingBottom: "16px", borderBottom: "2px solid #6264f4", marginBottom: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "2px" }}>
+              <span style={{ fontSize: "11px", color: "#c4b8e0", fontWeight: "700" }}>
+                {String(idx + 1).padStart(2, "0")} / {candidates.length}
+              </span>
+            </div>
+            <div style={{ fontSize: "22px", fontWeight: "700", fontFamily: "'Sora', sans-serif",
+              color: "#0f0f2d", marginBottom: "3px" }}>{c.name || "—"}</div>
+            <div style={{ fontSize: "13px", color: "#3d3d6b" }}>
+              {c.current_designation || ""}
+              {c.current_company ? ` · ${c.current_company}` : ""}
+            </div>
+          </div>
+
+          {/* Key facts row */}
+          <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginBottom: "20px",
+            fontSize: "12px", color: "#8b8ab8" }}>
+            {c.total_experience != null && <span>💼 {c.total_experience} years exp</span>}
+            {c.location          && <span>📍 {c.location}</span>}
+            {c.notice_period != null && <span>⏱ {c.notice_period}d notice</span>}
+            {c.email             && <span>✉ {c.email}</span>}
+            {c.phone             && <span>📞 {c.phone}</span>}
+          </div>
+
+          {/* Matching skills */}
+          {(c.matching_skills || []).length > 0 && (
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "10px", fontWeight: "700", color: "#8b8ab8",
+                textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>
+                Relevant Skills
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {c.matching_skills.map((s, i) => (
+                  <span key={i} style={{ padding: "3px 10px", borderRadius: "20px", fontSize: "11px",
+                    fontWeight: "600", backgroundColor: "rgba(59,178,115,0.12)", color: "#2a7a50",
+                    border: "1px solid rgba(59,178,115,0.2)" }}>{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recruiter Note — from free-text note or AI-generated profile snapshot */}
+          {c.recruiter_summary && (
+            <div style={{ backgroundColor: "#fffbf0", border: "1px solid rgba(217,119,6,0.2)",
+              borderRadius: "10px", padding: "14px 16px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "10px", fontWeight: "700", color: "#d97706",
+                textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px",
+                fontFamily: "'Sora', sans-serif" }}>
+                Recruiter Note
+              </div>
+              <div style={{ fontSize: "13px", color: "#3d3d6b", lineHeight: "1.7" }}>
+                {c.recruiter_summary}
+              </div>
+            </div>
+          )}
+
+          {/* Talint Assessment */}
+          {c.talint_assessment && (
+            <div style={{ backgroundColor: "rgba(98,100,244,0.05)",
+              border: "1px solid rgba(98,100,244,0.15)", borderRadius: "10px",
+              padding: "14px 16px" }}>
+              <div style={{ fontSize: "10px", fontWeight: "700", color: "#6264f4",
+                textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px",
+                fontFamily: "'Sora', sans-serif" }}>
+                Talint Assessment
+              </div>
+              <div style={{ fontSize: "13px", color: "#3d3d6b", lineHeight: "1.7" }}>
+                {c.talint_assessment}
+              </div>
+            </div>
+          )}
+
+          {/* Candidate footer */}
+          <div style={{ marginTop: "24px", fontSize: "10px", color: "#c4b8e0" }}>
+            Candidate {idx + 1} of {candidates.length} · ATRIOS Talint · {dateStr}
+          </div>
+        </div>
+      ))}
+
+      {/* Report footer */}
+      <div style={{ maxWidth: "780px", margin: "0 auto", padding: "24px 48px 48px",
+        borderTop: "1px solid #e8e5f5" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#c4b8e0" }}>
+          <span>ATRIOS Talent Intelligence · Confidential</span>
+          <span>Generated {dateStr} · {recruiter_name}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2971,6 +3588,9 @@ export default function App() {
     const token = params.get("token");
     if (token) localStorage.setItem("ti_token", token);
     if (seedId) return <SimilarPanel seedId={parseInt(seedId)} seedName={seedName || "Unknown"} />;
+  }
+ if (hash.startsWith("#report?")) {
+    return <ReportPrintView />;
   }
 
   // Public apply page — render before auth check
