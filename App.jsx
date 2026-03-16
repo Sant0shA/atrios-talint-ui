@@ -1257,12 +1257,12 @@ function SearchTab() {
                           onMouseLeave={e => e.currentTarget.style.backgroundColor = isStarred ? "rgba(245,158,11,0.04)" : ""}>
                           <td style={{ ...S.td, padding: "8px 4px 8px 12px" }}><StarBtn candidateId={c.id} starred={isStarred} onToggle={toggleStar} /></td>
                           <td style={S.td}><div style={{ fontWeight: "700", fontFamily: fontH }}>{c.name || "—"}</div><div style={{ fontSize: "11px", color: C.muted, fontFamily: font }}>{c.email || ""}</div></td>
-                          <td style={{ ...S.td, fontSize: "12px", color: C.textMid }}>{c.current_designation || "—"}</td>
-                          <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600" }}>{c.total_experience != null ? `${c.total_experience}y` : "—"}</td>
-                          <td style={{ ...S.td, fontSize: "12px" }}>{c.location || "—"}</td>
-                          <td style={{ ...S.td, fontSize: "12px", color: C.muted }}>{(c.metadata_json?.companies || []).slice(0, 1).join("") || "—"}</td>
+                          <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_designation || "—"}</td>
+                          <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>{c.total_experience != null ? `${c.total_experience}y` : "—"}</td>
+                          <td style={{ ...S.td, fontSize: "12px", color: C.muted, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>{c.location || "—"}</td>
+                          <td style={{ ...S.td, fontSize: "12px", color: C.muted, maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(c.metadata_json?.companies || []).slice(0, 1).join("") || "—"}</td>
                           <td style={S.td}>{(c.skills || []).slice(0, 2).map((s, j) => <span key={j} style={S.tag}>{s}</span>)}{(c.skills || []).length > 2 && <span style={{ fontSize: "11px", color: C.muted }}> +{c.skills.length - 2}</span>}</td>
-                          <td style={{ ...S.td, fontFamily: font, fontSize: "12px" }}>{c.current_ctc ? `${c.current_ctc}L` : "—"}</td>
+                          <td style={{ ...S.td, fontFamily: font, fontSize: "12px", whiteSpace: "nowrap" }}>{c.current_ctc ? `${c.current_ctc}L` : "—"}</td>
                           <td style={{ ...S.td, fontSize: "11px", color: C.muted, whiteSpace: "nowrap" }}>{fmtDate(c.created_at)}</td>
                           <td style={S.td}>
                             <div style={{ display: "flex", gap: "5px" }}>
