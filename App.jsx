@@ -1256,7 +1256,10 @@ function SearchTab() {
                           onMouseEnter={e => e.currentTarget.style.backgroundColor = isStarred ? "rgba(245,158,11,0.08)" : C.surface}
                           onMouseLeave={e => e.currentTarget.style.backgroundColor = isStarred ? "rgba(245,158,11,0.04)" : ""}>
                           <td style={{ ...S.td, padding: "8px 4px 8px 12px" }}><StarBtn candidateId={c.id} starred={isStarred} onToggle={toggleStar} /></td>
-                          <td style={S.td}><div style={{ fontWeight: "700", fontFamily: fontH }}>{c.name || "—"}</div><div style={{ fontSize: "11px", color: C.muted, fontFamily: font }}>{c.email || ""}</div></td>
+                          <td style={{ ...S.td, maxWidth: "200px" }}>
+                            <div style={{ fontWeight: "700", fontFamily: fontH, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || "—"}</div>
+                            <div style={{ fontSize: "11px", color: C.muted, fontFamily: font, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.email || ""}>{c.email || ""}</div>
+                          </td>
                           <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_designation || "—"}</td>
                           <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>{c.total_experience != null ? `${c.total_experience}y` : "—"}</td>
                           <td style={{ ...S.td, fontSize: "12px", color: C.muted, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>{c.location || "—"}</td>
