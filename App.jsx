@@ -464,13 +464,28 @@ function SimilarLoader() {
 }
 
 // ─── WEIGHT SLIDERS ───────────────────────────────────────────────────────────
-const DEFAULT_WEIGHTS = { vector: 60, skill: 30, experience: 10 };
 
+// Similar candidates default (semantic-heavy, 3-factor)
+const DEFAULT_WEIGHTS = { vector: 80, skill: 15, experience: 5 };
+
+// Project match defaults (4-factor, NGO/Non-Tech profile)
+const DEFAULT_PROJECT_WEIGHTS = { skill: 35, vector: 30, experience: 20, domain: 15 };
+
+// Project scoring presets — must match SCORING_PRESETS in project_routes.py
+const PROJECT_PRESETS = {
+  ngo:        { label: "NGO / Social Sector", skill: 35, vector: 30, experience: 20, domain: 15 },
+  technology: { label: "Technology",          skill: 50, vector: 25, experience: 20, domain:  5 },
+  consulting: { label: "Consulting",          skill: 30, vector: 35, experience: 20, domain: 15 },
+  bfsi:       { label: "BFSI",               skill: 35, vector: 30, experience: 15, domain: 20 },
+  general:    { label: "General",             skill: 30, vector: 35, experience: 25, domain: 10 },
+};
+
+// ── 3-factor slider (used in Similar Candidates panel) ────────────────────────
 function WeightSliders({ weights, onChange }) {
   const sliderConfig = [
-    { key: "vector",     label: "Talint",     color: C.primary,  icon: "psychology" },
+    { key: "vector",     label: "Talint",     color: C.primary,  icon: "psychology"  },
     { key: "skill",      label: "Skills",     color: C.success,  icon: "construction" },
-    { key: "experience", label: "Experience", color: C.similar,  icon: "timeline" },
+    { key: "experience", label: "Experience", color: C.similar,  icon: "timeline"    },
   ];
 
   const handleChange = (key, rawVal) => {
@@ -480,15 +495,12 @@ function WeightSliders({ weights, onChange }) {
     const currentOtherTotal = others.reduce((s, k) => s + weights[k], 0);
     let updated = { ...weights, [key]: val };
     if (currentOtherTotal === 0) {
-      // distribute evenly
       updated[others[0]] = Math.floor(remaining / 2);
       updated[others[1]] = remaining - updated[others[0]];
     } else {
-      // proportional redistribution
       others.forEach(k => {
         updated[k] = Math.round((weights[k] / currentOtherTotal) * remaining);
       });
-      // fix rounding so total is exactly 100
       const total = Object.values(updated).reduce((a, b) => a + b, 0);
       if (total !== 100) updated[others[1]] += (100 - total);
     }
@@ -506,7 +518,6 @@ function WeightSliders({ weights, onChange }) {
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <Icon n="tune" size={14} color={C.muted} />
           <span style={{ ...S.label, marginBottom: 0 }}>Scoring Weights</span>
-          {/* Live formula pill */}
           <span style={{ fontSize: "10px", color: C.muted, backgroundColor: C.surface,
             border: `1px solid ${C.border}`, borderRadius: "6px", padding: "1px 8px", fontFamily: font }}>
             tal·{weights.vector}% + skill·{weights.skill}% + exp·{weights.experience}%
@@ -533,7 +544,6 @@ function WeightSliders({ weights, onChange }) {
               </div>
               <span style={{ fontSize: "12px", fontWeight: "700", color, fontFamily: font }}>{weights[key]}%</span>
             </div>
-            {/* Track + filled portion */}
             <div style={{ position: "relative", height: "20px", display: "flex", alignItems: "center" }}>
               <div style={{ position: "absolute", left: 0, right: 0, height: "4px",
                 borderRadius: "4px", backgroundColor: C.border }} />
@@ -544,7 +554,93 @@ function WeightSliders({ weights, onChange }) {
                 onChange={e => handleChange(key, e.target.value)}
                 style={{ position: "relative", width: "100%", appearance: "none", WebkitAppearance: "none",
                   background: "transparent", cursor: "pointer", height: "20px", margin: 0,
-                  // thumb styles via inline — limited, but works
+                  accentColor: color }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {total !== 100 && (
+        <div style={{ fontSize: "11px", color: C.error, marginTop: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+          <Icon n="warning" size={12} color={C.error} />Weights must sum to 100% (currently {total}%)
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 4-factor slider (used in Project Match panel) ─────────────────────────────
+function ProjectWeightSliders({ weights, onChange }) {
+  const sliderConfig = [
+    { key: "skill",      label: "Skills",      color: C.success,  icon: "construction" },
+    { key: "vector",     label: "Semantic",    color: C.primary,  icon: "psychology"   },
+    { key: "experience", label: "Experience",  color: C.similar,  icon: "timeline"     },
+    { key: "domain",     label: "Domain",      color: C.info,     icon: "domain"       },
+  ];
+
+  const handleChange = (key, rawVal) => {
+    const val = Math.max(0, Math.min(100, parseInt(rawVal) || 0));
+    const others = sliderConfig.map(s => s.key).filter(k => k !== key);
+    const remaining = 100 - val;
+    const currentOtherTotal = others.reduce((s, k) => s + weights[k], 0);
+    let updated = { ...weights, [key]: val };
+    if (currentOtherTotal === 0) {
+      const share = Math.floor(remaining / others.length);
+      others.forEach((k, i) => { updated[k] = i < others.length - 1 ? share : remaining - share * (others.length - 1); });
+    } else {
+      others.forEach(k => {
+        updated[k] = Math.round((weights[k] / currentOtherTotal) * remaining);
+      });
+      const total = Object.values(updated).reduce((a, b) => a + b, 0);
+      if (total !== 100) updated[others[others.length - 1]] += (100 - total);
+    }
+    onChange(updated);
+  };
+
+  const total = Object.values(weights).reduce((a, b) => a + b, 0);
+  const isDefault = JSON.stringify(weights) === JSON.stringify(DEFAULT_PROJECT_WEIGHTS);
+
+  return (
+    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "14px", marginTop: "4px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <Icon n="tune" size={14} color={C.muted} />
+          <span style={{ ...S.label, marginBottom: 0 }}>Scoring Weights</span>
+          <span style={{ fontSize: "10px", color: C.muted, backgroundColor: C.surface,
+            border: `1px solid ${C.border}`, borderRadius: "6px", padding: "1px 8px", fontFamily: font }}>
+            skill·{weights.skill}% + sem·{weights.vector}% + exp·{weights.experience}% + dom·{weights.domain}%
+          </span>
+        </div>
+        {!isDefault && (
+          <button onClick={() => onChange({ ...DEFAULT_PROJECT_WEIGHTS })}
+            style={{ fontSize: "11px", color: C.muted, background: "none", border: "none",
+              cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", padding: "2px 6px",
+              borderRadius: "6px", transition: "color 0.15s" }}
+            onMouseEnter={e => e.currentTarget.style.color = C.primary}
+            onMouseLeave={e => e.currentTarget.style.color = C.muted}>
+            <Icon n="restart_alt" size={13} />Reset
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+        {sliderConfig.map(({ key, label, color, icon }) => (
+          <div key={key} style={{ flex: "1", minWidth: "140px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                <Icon n={icon} size={12} color={color} />
+                <span style={{ fontSize: "11px", fontWeight: "600", color: C.textMid }}>{label}</span>
+              </div>
+              <span style={{ fontSize: "12px", fontWeight: "700", color, fontFamily: font }}>{weights[key]}%</span>
+            </div>
+            <div style={{ position: "relative", height: "20px", display: "flex", alignItems: "center" }}>
+              <div style={{ position: "absolute", left: 0, right: 0, height: "4px",
+                borderRadius: "4px", backgroundColor: C.border }} />
+              <div style={{ position: "absolute", left: 0, height: "4px",
+                borderRadius: "4px", backgroundColor: color, opacity: 0.35,
+                width: `${weights[key]}%`, transition: "width 0.15s" }} />
+              <input type="range" min="0" max="100" value={weights[key]}
+                onChange={e => handleChange(key, e.target.value)}
+                style={{ position: "relative", width: "100%", appearance: "none", WebkitAppearance: "none",
+                  background: "transparent", cursor: "pointer", height: "20px", margin: 0,
                   accentColor: color }} />
             </div>
           </div>
@@ -2675,14 +2771,17 @@ function CreateProjectModal({ onCreated, onCancel }) {
 // ─── PROJECT DETAIL PAGE ──────────────────────────────────────────────────────
 function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const isMobile = useIsMobile();
-  const [project,    setProject]    = useState(initProject);
-  const [candidates, setCandidates] = useState([]);
-  const [total,      setTotal]      = useState(0);
-  const [matching,   setMatching]   = useState(false);
-  const [matchMsg,   setMatchMsg]   = useState("");
-  const [copiedLink, setCopied]     = useState(false);
-  const [poolTab,    setPoolTab]    = useState('matched');
-  const [showReport, setShowReport] = useState(false);
+  const [project,        setProject]        = useState(initProject);
+  const [candidates,     setCandidates]     = useState([]);
+  const [total,          setTotal]          = useState(0);
+  const [matching,       setMatching]       = useState(false);
+  const [matchMsg,       setMatchMsg]       = useState("");
+  const [copiedLink,     setCopied]         = useState(false);
+  const [poolTab,        setPoolTab]        = useState('matched');
+  const [showReport,     setShowReport]     = useState(false);
+  const [showMatchPanel, setShowMatchPanel] = useState(false);
+  const [matchWeights,   setMatchWeights]   = useState({ ...DEFAULT_PROJECT_WEIGHTS });
+  const [selectedPreset, setSelectedPreset] = useState("ngo");
 
   const applyUrl = `${window.location.origin}/apply/${project.apply_slug}`;
 
@@ -2690,21 +2789,39 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     try {
       const r = await apiFetch(`/api/v1/projects/${project.id}/candidates?page=1&page_size=500`);
       const d = await r.json();
-      const list = d.candidates || [];
-      setCandidates(list);
+      setCandidates(d.candidates || []);
       setTotal(d.total || 0);
     } catch { setCandidates([]); }
   };
 
   useEffect(() => { fetchCandidates(); }, [project.id]);
 
+  // Apply preset — updates sliders to preset values
+  const applyPreset = (presetKey) => {
+    setSelectedPreset(presetKey);
+    const p = PROJECT_PRESETS[presetKey];
+    if (p) setMatchWeights({ skill: p.skill, vector: p.vector, experience: p.experience, domain: p.domain });
+  };
+
   const runMatch = async () => {
     setMatching(true); setMatchMsg("");
     try {
-      const r = await apiFetch(`/api/v1/projects/${project.id}/match`, { method: "POST" });
+      const r = await apiFetch(`/api/v1/projects/${project.id}/match`, {
+        method: "POST",
+        body: JSON.stringify({
+          skill_weight:      matchWeights.skill      / 100,
+          vector_weight:     matchWeights.vector     / 100,
+          experience_weight: matchWeights.experience / 100,
+          domain_weight:     matchWeights.domain     / 100,
+        }),
+      });
       const d = await r.json();
       if (!r.ok) setMatchMsg(d.detail || "Match failed.");
-      else { setMatchMsg(`✓ ${d.candidates_matched} candidates matched`); fetchCandidates(); }
+      else {
+        setMatchMsg(`✓ ${d.candidates_matched} candidates matched`);
+        setShowMatchPanel(false);
+        fetchCandidates();
+      }
     } catch { setMatchMsg("Network error."); }
     finally { setMatching(false); }
   };
@@ -2720,8 +2837,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const viewCandidate = async (candidateId) => {
     try {
       const res = await apiFetch(`/api/v1/candidates/${candidateId}`);
-      const full = await res.json();
-      onViewCandidate(full);
+      onViewCandidate(await res.json());
     } catch { }
   };
 
@@ -2746,24 +2862,25 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     fetchCandidates();
   };
 
-  const scoreColor = s => !s ? C.muted       : s >= 0.7 ? C.success      : s >= 0.5 ? C.warning      : C.error;
-  const scoreBg    = s => !s ? C.surface      : s >= 0.7 ? C.successLight  : s >= 0.5 ? C.warningLight  : C.errorLight;
+  const scoreColor = s => !s ? C.muted      : s >= 0.7 ? C.success     : s >= 0.5 ? C.warning     : C.error;
+  const scoreBg    = s => !s ? C.surface     : s >= 0.7 ? C.successLight : s >= 0.5 ? C.warningLight : C.errorLight;
   const srcBadge = src =>
     src === "apply_link"     ? { type: "success", label: "Applied"  }
   : src === "apply_link_add" ? { type: "success", label: "Promoted" }
   : src === "manual_add"     ? { type: "",        label: "Manual"   }
   :                            { type: "admin",   label: "Auto"     };
 
-  const matchedCandidates = candidates.filter(c => c.source !== 'apply_link');
-  const appliedCandidates = candidates.filter(c => c.source === 'apply_link');
+  const matchedCandidates     = candidates.filter(c => c.source !== 'apply_link');
+  const appliedCandidates     = candidates.filter(c => c.source === 'apply_link');
   const shortlistedCandidates = candidates.filter(c => c.source === 'apply_link_add' && c.is_active);
-  const displayCandidates = poolTab === 'matched' ? matchedCandidates : appliedCandidates;
+  const displayCandidates     = poolTab === 'matched' ? matchedCandidates : appliedCandidates;
+  const reportAvailable       = matchedCandidates.filter(c => c.is_active).length > 0;
 
-  // Report is available if there are any active matched candidates
-  const reportAvailable = matchedCandidates.filter(c => c.is_active).length > 0;
+  const weightsChanged = JSON.stringify(matchWeights) !== JSON.stringify(DEFAULT_PROJECT_WEIGHTS);
 
   return (
     <div>
+      {/* ── Header row ── */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "20px" }}>
         <button style={{ ...S.btn("outline", true), marginTop: "2px" }} onClick={onBack}>
           <Icon n="arrow_back" size={14} />Back
@@ -2777,22 +2894,78 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         </div>
         <div style={{ display: "flex", gap: "8px" }}>
           {reportAvailable && !project.is_archived && (
-            <button
-              style={S.btn("outline", true)}
-              onClick={() => setShowReport(true)}>
+            <button style={S.btn("outline", true)} onClick={() => setShowReport(true)}>
               <Icon n="summarize" size={13} />Generate Report
             </button>
           )}
           <button
-            style={{ ...S.btn(matching || project.is_archived ? "outline" : "primary", true),
-              opacity: matching || project.is_archived ? 0.5 : 1 }}
-            onClick={runMatch} disabled={matching || project.is_archived}>
-            <Icon n="hub" size={13} />{matching ? "Matching…" : "Run Match"}
+            style={{ ...S.btn(project.is_archived ? "outline" : "primary", true),
+              opacity: project.is_archived ? 0.5 : 1 }}
+            onClick={() => { if (!project.is_archived) setShowMatchPanel(p => !p); }}
+            disabled={project.is_archived}>
+            <Icon n="hub" size={13} />Run Match
           </button>
         </div>
       </div>
 
-      {matchMsg && (
+      {/* ── Match panel (preset + sliders + run button) ── */}
+      {showMatchPanel && !project.is_archived && (
+        <div className="fade-up" style={{ ...S.card, marginBottom: "16px", border: `1px solid ${C.borderMid}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+            <div style={{ fontSize: "13px", fontWeight: "700", fontFamily: fontH, color: C.text, display: "flex", alignItems: "center", gap: "7px" }}>
+              <Icon n="hub" size={15} color={C.primary} />Match Settings
+            </div>
+            <button onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
+              <Icon n="close" size={18} />
+            </button>
+          </div>
+
+          {/* Preset dropdown */}
+          <div style={{ marginBottom: "4px" }}>
+            <label style={S.label}>Scoring Profile</label>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px" }}>
+              {Object.entries(PROJECT_PRESETS).map(([key, preset]) => (
+                <button key={key}
+                  onClick={() => applyPreset(key)}
+                  style={{ padding: "5px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "600",
+                    cursor: "pointer", border: `1px solid ${selectedPreset === key ? C.primary : C.border}`,
+                    backgroundColor: selectedPreset === key ? C.primaryDim : "transparent",
+                    color: selectedPreset === key ? C.primary : C.muted,
+                    transition: "all 0.15s", fontFamily: fontB }}>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 4-factor weight sliders */}
+          <ProjectWeightSliders weights={matchWeights} onChange={setMatchWeights} />
+
+          {/* Run button + message */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${C.border}` }}>
+            <button
+              style={{ ...S.btn("primary"), opacity: matching ? 0.6 : 1 }}
+              onClick={runMatch} disabled={matching}>
+              <Icon n="hub" size={14} />{matching ? "Matching…" : weightsChanged ? "Run Match ✦" : "Run Match"}
+            </button>
+            <button style={S.btn("outline")} onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}>
+              Cancel
+            </button>
+            {matchMsg && (
+              <span style={{ fontSize: "13px", color: matchMsg.startsWith("✓") ? C.success : C.error,
+                display: "flex", alignItems: "center", gap: "5px" }}>
+                <Icon n={matchMsg.startsWith("✓") ? "check_circle" : "error"} size={14}
+                  color={matchMsg.startsWith("✓") ? C.success : C.error} />
+                {matchMsg}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Match result message (when panel is closed) ── */}
+      {matchMsg && !showMatchPanel && (
         <div style={{ background: matchMsg.startsWith("✓") ? C.successLight : C.errorLight,
           border: `1px solid ${matchMsg.startsWith("✓") ? "rgba(59,178,115,0.25)" : "rgba(224,92,92,0.25)"}`,
           borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
@@ -2801,6 +2974,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         </div>
       )}
 
+      {/* ── Apply link card ── */}
       <div style={{ ...S.card, display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", marginBottom: "20px" }}>
         <div style={{ flex: 1, minWidth: "200px" }}>
           <div style={S.label}>Apply Link</div>
@@ -2817,43 +2991,37 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         </button>
       </div>
 
+      {/* ── Pool counts ── */}
       <div style={{ fontSize: "13px", color: C.muted, marginBottom: "12px" }}>
         {matchedCandidates.length} matched · {appliedCandidates.length} applied
       </div>
 
-      {/* Tab toggle */}
+      {/* ── Tab toggle ── */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
         <button
-          style={{
-            padding: '6px 16px', borderRadius: '20px', fontSize: '13px',
-            fontWeight: '600', cursor: 'pointer', border: 'none',
+          style={{ padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
+            cursor: 'pointer', border: 'none',
             backgroundColor: poolTab === 'matched' ? C.primary : C.surface,
-            color: poolTab === 'matched' ? '#fff' : C.muted,
-          }}
-          onClick={() => setPoolTab('matched')}
-        >
-          <Icon n='auto_awesome' size={13} />
-          {` Matched (${matchedCandidates.length})`}
+            color: poolTab === 'matched' ? '#fff' : C.muted }}
+          onClick={() => setPoolTab('matched')}>
+          <Icon n='auto_awesome' size={13} />{` Matched (${matchedCandidates.length})`}
         </button>
         <button
-          style={{
-            padding: '6px 16px', borderRadius: '20px', fontSize: '13px',
-            fontWeight: '600', cursor: 'pointer', border: 'none',
+          style={{ padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
+            cursor: 'pointer', border: 'none',
             backgroundColor: poolTab === 'applied' ? C.success : C.surface,
-            color: poolTab === 'applied' ? '#fff' : C.muted,
-          }}
-          onClick={() => setPoolTab('applied')}
-        >
-          <Icon n='inbox' size={13} />
-          {` Applied (${appliedCandidates.length})`}
+            color: poolTab === 'applied' ? '#fff' : C.muted }}
+          onClick={() => setPoolTab('applied')}>
+          <Icon n='inbox' size={13} />{` Applied (${appliedCandidates.length})`}
         </button>
       </div>
 
+      {/* ── Candidate list ── */}
       {displayCandidates.length === 0 ? (
         <div style={{ textAlign: "center", padding: "48px 0", color: C.muted }}>
           <Icon n="people" size={40} color={C.border} style={{ display: "block", margin: "0 auto 12px" }} />
           {poolTab === 'matched'
-            ? "No matched candidates yet. Run a match to build the pool."
+            ? "No matched candidates yet. Click Run Match to build the pool."
             : "No applied candidates yet. Share the apply link to receive applications."}
         </div>
       ) : isMobile ? (
@@ -2917,26 +3085,29 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                         </div>
                       ) : <span style={{ fontSize: "13px", color: C.muted }}>—</span>}
                     </td>
-                    <td style={S.td}>
-                      <div style={{ fontWeight: "700" }}>{c.name || "—"}</div>
-                      <div style={{ fontSize: "11px", color: C.muted }}>{c.current_company || "—"}</div>
+                    <td style={{ ...S.td, maxWidth: "180px" }}>
+                      <div style={{ fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || "—"}</div>
+                      <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_company || "—"}</div>
                     </td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid }}>{c.current_designation || "—"}</td>
+                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_designation || "—"}</td>
                     <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
                       {c.total_experience != null ? `${c.total_experience}y` : "—"}
                     </td>
-                    <td style={{ ...S.td, color: C.muted, fontSize: "12px" }}>{c.location || "—"}</td>
+                    <td style={{ ...S.td, color: C.muted, fontSize: "12px", maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>{c.location || "—"}</td>
                     <td style={S.td}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                          <ScorePill label="Sem" value={c.vector_score ?? 0} color={C.primary} />
-                          <ScorePill label="Skill" value={c.skill_score ?? 0} color={C.success} />
-                          <ScorePill label="Exp" value={c.experience_score ?? 0} color={C.similar} />
+                          <ScorePill label="Skill" value={c.skill_score   ?? 0} color={C.success} />
+                          <ScorePill label="Sem"   value={c.vector_score  ?? 0} color={C.primary} />
+                          <ScorePill label="Exp"   value={c.experience_score ?? 0} color={C.similar} />
+                          {c.domain_score != null && (
+                            <ScorePill label="Dom" value={c.domain_score}   color={C.info} />
+                          )}
                         </div>
                       ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
                     </td>
                     <td style={S.td}><span style={S.badge(badge.type)}>{badge.label}</span></td>
-                    <td style={S.td}>
+                    <td style={{ ...S.td, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                         <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
                         <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
@@ -2958,7 +3129,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         </div>
       )}
 
-      {/* Generate Report Modal */}
+      {/* ── Generate Report Modal ── */}
       {showReport && (
         <GenerateReportModal
           project={project}
