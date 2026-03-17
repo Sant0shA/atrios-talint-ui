@@ -469,11 +469,11 @@ function SimilarLoader() {
 const DEFAULT_WEIGHTS = { vector: 80, skill: 15, experience: 5 };
 
 // Project match defaults (4-factor, NGO/Non-Tech profile)
-const DEFAULT_PROJECT_WEIGHTS = { skill: 35, vector: 30, experience: 20, domain: 15 };
+const DEFAULT_PROJECT_WEIGHTS = { skill: 25, vector: 40, experience: 20, domain: 15 };
 
 // Project scoring presets — must match SCORING_PRESETS in project_routes.py
 const PROJECT_PRESETS = {
-  ngo:        { label: "NGO / Social Sector", skill: 35, vector: 30, experience: 20, domain: 15 },
+  ngo:        { label: "NGO / Social Sector", skill: 25, vector: 40, experience: 20, domain: 15 },
   technology: { label: "Technology",          skill: 50, vector: 25, experience: 20, domain:  5 },
   consulting: { label: "Consulting",          skill: 30, vector: 35, experience: 20, domain: 15 },
   bfsi:       { label: "BFSI",               skill: 35, vector: 30, experience: 15, domain: 20 },
@@ -568,93 +568,142 @@ function WeightSliders({ weights, onChange }) {
   );
 }
 
-// ── 4-factor slider (used in Project Match panel) ─────────────────────────────
+// ── 4-factor number inputs (used in Project Match panel) ──────────────────────
 function ProjectWeightSliders({ weights, onChange }) {
-  const sliderConfig = [
-    { key: "skill",      label: "Skills",      color: C.success,  icon: "construction" },
-    { key: "vector",     label: "Semantic",    color: C.primary,  icon: "psychology"   },
-    { key: "experience", label: "Experience",  color: C.similar,  icon: "timeline"     },
-    { key: "domain",     label: "Domain",      color: C.info,     icon: "domain"       },
+  const inputConfig = [
+    { key: "skill",      label: "Skills",     color: C.success, icon: "construction" },
+    { key: "vector",     label: "Semantic",   color: C.primary, icon: "psychology"   },
+    { key: "experience", label: "Experience", color: C.similar, icon: "timeline"     },
+    { key: "domain",     label: "Domain",     color: C.info,    icon: "domain"       },
   ];
 
-  const handleChange = (key, rawVal) => {
-    const val = Math.max(0, Math.min(100, parseInt(rawVal) || 0));
-    const others = sliderConfig.map(s => s.key).filter(k => k !== key);
-    const remaining = 100 - val;
-    const currentOtherTotal = others.reduce((s, k) => s + weights[k], 0);
-    let updated = { ...weights, [key]: val };
-    if (currentOtherTotal === 0) {
-      const share = Math.floor(remaining / others.length);
-      others.forEach((k, i) => { updated[k] = i < others.length - 1 ? share : remaining - share * (others.length - 1); });
-    } else {
-      others.forEach(k => {
-        updated[k] = Math.round((weights[k] / currentOtherTotal) * remaining);
-      });
-      const total = Object.values(updated).reduce((a, b) => a + b, 0);
-      if (total !== 100) updated[others[others.length - 1]] += (100 - total);
-    }
-    onChange(updated);
-  };
-
-  const total = Object.values(weights).reduce((a, b) => a + b, 0);
+  const total    = Object.values(weights).reduce((a, b) => a + b, 0);
+  const isValid  = total === 100;
   const isDefault = JSON.stringify(weights) === JSON.stringify(DEFAULT_PROJECT_WEIGHTS);
+
+  const handleChange = (key, raw) => {
+    const val = Math.max(0, Math.min(100, parseInt(raw) || 0));
+    onChange({ ...weights, [key]: val });
+  };
 
   return (
     <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "14px", marginTop: "4px" }}>
+
+      {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
           <Icon n="tune" size={14} color={C.muted} />
           <span style={{ ...S.label, marginBottom: 0 }}>Scoring Weights</span>
-          <span style={{ fontSize: "10px", color: C.muted, backgroundColor: C.surface,
-            border: `1px solid ${C.border}`, borderRadius: "6px", padding: "1px 8px", fontFamily: font }}>
-            skill·{weights.skill}% + sem·{weights.vector}% + exp·{weights.experience}% + dom·{weights.domain}%
+          <span style={{
+            fontSize: "10px", color: isValid ? C.muted : C.error,
+            backgroundColor: isValid ? C.surface : C.errorLight,
+            border: `1px solid ${isValid ? C.border : "rgba(224,92,92,0.3)"}`,
+            borderRadius: "6px", padding: "1px 8px", fontFamily: font,
+            fontWeight: isValid ? "400" : "700", transition: "all 0.2s",
+          }}>
+            {isValid
+              ? `skill·${weights.skill}% + sem·${weights.vector}% + exp·${weights.experience}% + dom·${weights.domain}%`
+              : `sum = ${total}% — must equal 100%`}
           </span>
         </div>
         {!isDefault && (
-          <button onClick={() => onChange({ ...DEFAULT_PROJECT_WEIGHTS })}
-            style={{ fontSize: "11px", color: C.muted, background: "none", border: "none",
-              cursor: "pointer", display: "flex", alignItems: "center", gap: "4px", padding: "2px 6px",
-              borderRadius: "6px", transition: "color 0.15s" }}
+          <button
+            onClick={() => onChange({ ...DEFAULT_PROJECT_WEIGHTS })}
+            style={{
+              fontSize: "11px", color: C.muted, background: "none", border: "none",
+              cursor: "pointer", display: "flex", alignItems: "center", gap: "4px",
+              padding: "2px 6px", borderRadius: "6px", transition: "color 0.15s",
+            }}
             onMouseEnter={e => e.currentTarget.style.color = C.primary}
             onMouseLeave={e => e.currentTarget.style.color = C.muted}>
             <Icon n="restart_alt" size={13} />Reset
           </button>
         )}
       </div>
-      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
-        {sliderConfig.map(({ key, label, color, icon }) => (
-          <div key={key} style={{ flex: "1", minWidth: "140px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                <Icon n={icon} size={12} color={color} />
-                <span style={{ fontSize: "11px", fontWeight: "600", color: C.textMid }}>{label}</span>
-              </div>
-              <span style={{ fontSize: "12px", fontWeight: "700", color, fontFamily: font }}>{weights[key]}%</span>
+
+      {/* Number inputs row */}
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+        {inputConfig.map(({ key, label, color, icon }) => (
+          <div key={key} style={{ flex: "1", minWidth: "100px" }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: "5px", marginBottom: "6px",
+            }}>
+              <Icon n={icon} size={12} color={color} />
+              <span style={{ fontSize: "11px", fontWeight: "600", color: C.textMid }}>{label}</span>
             </div>
-            <div style={{ position: "relative", height: "20px", display: "flex", alignItems: "center" }}>
-              <div style={{ position: "absolute", left: 0, right: 0, height: "4px",
-                borderRadius: "4px", backgroundColor: C.border }} />
-              <div style={{ position: "absolute", left: 0, height: "4px",
-                borderRadius: "4px", backgroundColor: color, opacity: 0.35,
-                width: `${weights[key]}%`, transition: "width 0.15s" }} />
-              <input type="range" min="0" max="100" value={weights[key]}
+            <div style={{ position: "relative" }}>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={weights[key]}
                 onChange={e => handleChange(key, e.target.value)}
-                style={{ position: "relative", width: "100%", appearance: "none", WebkitAppearance: "none",
-                  background: "transparent", cursor: "pointer", height: "20px", margin: 0,
-                  accentColor: color }} />
+                style={{
+                  ...S.input,
+                  fontFamily: font,
+                  fontSize: "18px",
+                  fontWeight: "700",
+                  color,
+                  textAlign: "center",
+                  paddingRight: "22px",
+                  border: `1.5px solid ${
+                    weights[key] === 0
+                      ? C.border
+                      : `${color}55`
+                  }`,
+                  backgroundColor: weights[key] === 0 ? C.surface : `${color}08`,
+                  transition: "all 0.15s",
+                }}
+              />
+              <span style={{
+                position: "absolute", right: "8px", top: "50%",
+                transform: "translateY(-50%)",
+                fontSize: "11px", fontWeight: "700", color, opacity: 0.6,
+                pointerEvents: "none",
+              }}>%</span>
+            </div>
+            {/* Bar indicator */}
+            <div style={{
+              height: "3px", borderRadius: "3px",
+              backgroundColor: C.border, marginTop: "6px", overflow: "hidden",
+            }}>
+              <div style={{
+                height: "100%", borderRadius: "3px",
+                backgroundColor: color,
+                width: `${weights[key]}%`,
+                transition: "width 0.2s ease",
+                opacity: weights[key] === 0 ? 0 : 0.6,
+              }} />
             </div>
           </div>
         ))}
       </div>
-      {total !== 100 && (
-        <div style={{ fontSize: "11px", color: C.error, marginTop: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-          <Icon n="warning" size={12} color={C.error} />Weights must sum to 100% (currently {total}%)
+
+      {/* Hint text */}
+      <div style={{
+        marginTop: "10px", fontSize: "11px",
+        color: C.muted, display: "flex", alignItems: "center", gap: "5px",
+      }}>
+        <Icon n="info" size={12} color={C.muted} />
+        Set any param to 0 to remove it · all four must add up to 100
+      </div>
+
+      {/* Error state */}
+      {!isValid && (
+        <div style={{
+          marginTop: "8px", padding: "8px 12px", borderRadius: "8px",
+          backgroundColor: C.errorLight,
+          border: `1px solid rgba(224,92,92,0.25)`,
+          fontSize: "12px", fontWeight: "600", color: C.error,
+          display: "flex", alignItems: "center", gap: "6px",
+        }}>
+          <Icon n="warning" size={14} color={C.error} />
+          Weights must sum to 100% · currently {total}% · adjust any field to balance
         </div>
       )}
     </div>
   );
 }
-
 // ─── SCORE PILL ───────────────────────────────────────────────────────────────
 const ScorePill = ({ label, value, color }) => (
   <span style={{ display: "inline-flex", alignItems: "center", gap: "3px",
@@ -4041,9 +4090,10 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const [poolTab,        setPoolTab]        = useState('matched');
   const [showReport,     setShowReport]     = useState(false);
   const [showMatchPanel, setShowMatchPanel] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false);   // ← NEW
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [matchWeights,   setMatchWeights]   = useState({ ...DEFAULT_PROJECT_WEIGHTS });
   const [selectedPreset, setSelectedPreset] = useState("ngo");
+  const [removeConfirm,  setRemoveConfirm]  = useState(null); // candidate obj pending removal
 
   const applyUrl = `${window.location.origin}/apply/${project.apply_slug}`;
 
@@ -4053,7 +4103,9 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       const d = await r.json();
       setCandidates(d.candidates || []);
       setTotal(d.total || 0);
-    } catch { setCandidates([]); }
+    } catch {
+      setCandidates([]);
+    }
   };
 
   useEffect(() => { fetchCandidates(); }, [project.id]);
@@ -4061,30 +4113,50 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const applyPreset = (presetKey) => {
     setSelectedPreset(presetKey);
     const p = PROJECT_PRESETS[presetKey];
-    if (p) setMatchWeights({ skill: p.skill, vector: p.vector, experience: p.experience, domain: p.domain });
+    if (p) {
+      setMatchWeights({
+        skill: p.skill,
+        vector: p.vector,
+        experience: p.experience,
+        domain: p.domain
+      });
+    }
   };
 
   const runMatch = async () => {
-    setMatching(true); setMatchMsg("");
+    setMatching(true);
+    setMatchMsg("");
     try {
+      const weightTotal = Object.values(matchWeights).reduce((a, b) => a + b, 0);
+      if (weightTotal !== 100) {
+        setMatchMsg("Weights must sum to 100% before running match.");
+        setMatching(false);
+        return;
+      }
+
       const r = await apiFetch(`/api/v1/projects/${project.id}/match`, {
         method: "POST",
         body: JSON.stringify({
-          skill_weight:      matchWeights.skill      / 100,
-          vector_weight:     matchWeights.vector     / 100,
+          skill_weight:      matchWeights.skill / 100,
+          vector_weight:     matchWeights.vector / 100,
           experience_weight: matchWeights.experience / 100,
-          domain_weight:     matchWeights.domain     / 100,
+          domain_weight:     matchWeights.domain / 100,
         }),
       });
       const d = await r.json();
-      if (!r.ok) setMatchMsg(d.detail || "Match failed.");
-      else {
+
+      if (!r.ok) {
+        setMatchMsg(d.detail || "Match failed.");
+      } else {
         setMatchMsg(`✓ ${d.candidates_matched} candidates matched`);
         setShowMatchPanel(false);
         fetchCandidates();
       }
-    } catch { setMatchMsg("Network error."); }
-    finally { setMatching(false); }
+    } catch {
+      setMatchMsg("Network error.");
+    } finally {
+      setMatching(false);
+    }
   };
 
   const toggleApplyLink = async () => {
@@ -4099,37 +4171,41 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     try {
       const res = await apiFetch(`/api/v1/candidates/${candidateId}`);
       onViewCandidate(await res.json());
-    } catch { }
+    } catch {}
   };
 
   const removeCand = async (candidateId) => {
     await apiFetch(`/api/v1/projects/${project.id}/candidates/${candidateId}`, {
-      method: "PATCH", body: JSON.stringify({ action: "remove" }),
+      method: "PATCH",
+      body: JSON.stringify({ action: "remove" }),
     });
+    setRemoveConfirm(null);
     fetchCandidates();
   };
 
   const restoreCand = async (candidateId) => {
     await apiFetch(`/api/v1/projects/${project.id}/candidates/${candidateId}`, {
-      method: "PATCH", body: JSON.stringify({ action: "add" }),
+      method: "PATCH",
+      body: JSON.stringify({ action: "add" }),
     });
     fetchCandidates();
   };
 
   const handleAddCandidate = async (candidateId) => {
     await apiFetch(`/api/v1/projects/${project.id}/candidates/${candidateId}`, {
-      method: "PATCH", body: JSON.stringify({ action: "add", action_source: "apply_link_add" }),
+      method: "PATCH",
+      body: JSON.stringify({ action: "add", action_source: "apply_link_add" }),
     });
     fetchCandidates();
   };
 
-  const scoreColor = s => !s ? C.muted      : s >= 0.7 ? C.success     : s >= 0.5 ? C.warning     : C.error;
-  const scoreBg    = s => !s ? C.surface     : s >= 0.7 ? C.successLight : s >= 0.5 ? C.warningLight : C.errorLight;
+  const scoreColor = s => !s ? C.muted : s >= 0.7 ? C.success : s >= 0.5 ? C.warning : C.error;
+  const scoreBg    = s => !s ? C.surface : s >= 0.7 ? C.successLight : s >= 0.5 ? C.warningLight : C.errorLight;
   const srcBadge = src =>
-    src === "apply_link"     ? { type: "success", label: "Applied"  }
-  : src === "apply_link_add" ? { type: "success", label: "Promoted" }
-  : src === "manual_add"     ? { type: "",        label: "Manual"   }
-  :                            { type: "admin",   label: "Auto"     };
+    src === "apply_link"     ? { type: "success", label: "Applied" }  :
+    src === "apply_link_add" ? { type: "success", label: "Promoted" } :
+    src === "manual_add"     ? { type: "",        label: "Manual" }   :
+                               { type: "admin",   label: "Auto" };
 
   const matchedCandidates     = candidates.filter(c => c.source !== 'apply_link');
   const appliedCandidates     = candidates.filter(c => c.source === 'apply_link');
@@ -4159,17 +4235,19 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
               <Icon n="summarize" size={13} />Generate Report
             </button>
           )}
-          {/* ── Upload CVs button — NEW ── */}
           {!project.is_archived && (
             <button style={S.btn("outline", true)} onClick={() => setShowBulkUpload(true)}>
               <Icon n="upload_file" size={13} />Upload CVs
             </button>
           )}
           <button
-            style={{ ...S.btn(project.is_archived ? "outline" : "primary", true),
-              opacity: project.is_archived ? 0.5 : 1 }}
+            style={{
+              ...S.btn(project.is_archived ? "outline" : "primary", true),
+              opacity: project.is_archived ? 0.5 : 1
+            }}
             onClick={() => { if (!project.is_archived) setShowMatchPanel(p => !p); }}
-            disabled={project.is_archived}>
+            disabled={project.is_archived}
+          >
             <Icon n="hub" size={13} />Run Match
           </button>
         </div>
@@ -4182,8 +4260,10 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             <div style={{ fontSize: "13px", fontWeight: "700", fontFamily: fontH, color: C.text, display: "flex", alignItems: "center", gap: "7px" }}>
               <Icon n="hub" size={15} color={C.primary} />Match Settings
             </div>
-            <button onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
+            <button
+              onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
+            >
               <Icon n="close" size={18} />
             </button>
           </div>
@@ -4192,13 +4272,22 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             <label style={S.label}>Scoring Profile</label>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px" }}>
               {Object.entries(PROJECT_PRESETS).map(([key, preset]) => (
-                <button key={key}
+                <button
+                  key={key}
                   onClick={() => applyPreset(key)}
-                  style={{ padding: "5px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "600",
-                    cursor: "pointer", border: `1px solid ${selectedPreset === key ? C.primary : C.border}`,
+                  style={{
+                    padding: "5px 14px",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    border: `1px solid ${selectedPreset === key ? C.primary : C.border}`,
                     backgroundColor: selectedPreset === key ? C.primaryDim : "transparent",
                     color: selectedPreset === key ? C.primary : C.muted,
-                    transition: "all 0.15s", fontFamily: fontB }}>
+                    transition: "all 0.15s",
+                    fontFamily: fontB
+                  }}
+                >
                   {preset.label}
                 </button>
               ))}
@@ -4210,17 +4299,27 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
           <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${C.border}` }}>
             <button
               style={{ ...S.btn("primary"), opacity: matching ? 0.6 : 1 }}
-              onClick={runMatch} disabled={matching}>
+              onClick={runMatch}
+              disabled={matching}
+            >
               <Icon n="hub" size={14} />{matching ? "Matching…" : weightsChanged ? "Run Match ✦" : "Run Match"}
             </button>
             <button style={S.btn("outline")} onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}>
               Cancel
             </button>
             {matchMsg && (
-              <span style={{ fontSize: "13px", color: matchMsg.startsWith("✓") ? C.success : C.error,
-                display: "flex", alignItems: "center", gap: "5px" }}>
-                <Icon n={matchMsg.startsWith("✓") ? "check_circle" : "error"} size={14}
-                  color={matchMsg.startsWith("✓") ? C.success : C.error} />
+              <span style={{
+                fontSize: "13px",
+                color: matchMsg.startsWith("✓") ? C.success : C.error,
+                display: "flex",
+                alignItems: "center",
+                gap: "5px"
+              }}>
+                <Icon
+                  n={matchMsg.startsWith("✓") ? "check_circle" : "error"}
+                  size={14}
+                  color={matchMsg.startsWith("✓") ? C.success : C.error}
+                />
                 {matchMsg}
               </span>
             )}
@@ -4230,10 +4329,15 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
 
       {/* ── Match result message (panel closed) ── */}
       {matchMsg && !showMatchPanel && (
-        <div style={{ background: matchMsg.startsWith("✓") ? C.successLight : C.errorLight,
+        <div style={{
+          background: matchMsg.startsWith("✓") ? C.successLight : C.errorLight,
           border: `1px solid ${matchMsg.startsWith("✓") ? "rgba(59,178,115,0.25)" : "rgba(224,92,92,0.25)"}`,
-          borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
-          fontSize: "13px", color: matchMsg.startsWith("✓") ? "#2a7a50" : C.error }}>
+          borderRadius: "8px",
+          padding: "10px 16px",
+          marginBottom: "16px",
+          fontSize: "13px",
+          color: matchMsg.startsWith("✓") ? "#2a7a50" : C.error
+        }}>
           {matchMsg}
         </div>
       )}
@@ -4242,12 +4346,25 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       <div style={{ ...S.card, display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", marginBottom: "20px" }}>
         <div style={{ flex: 1, minWidth: "200px" }}>
           <div style={S.label}>Apply Link</div>
-          <div style={{ fontSize: "12px", color: project.apply_enabled ? C.primary : C.muted,
-            fontFamily: font, wordBreak: "break-all" }}>{applyUrl}</div>
+          <div style={{
+            fontSize: "12px",
+            color: project.apply_enabled ? C.primary : C.muted,
+            fontFamily: font,
+            wordBreak: "break-all"
+          }}>
+            {applyUrl}
+          </div>
         </div>
-        <button style={S.btn("outline", true)}
-          onClick={() => { navigator.clipboard.writeText(applyUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
-          <Icon n={copiedLink ? "check" : "content_copy"} size={13} />{copiedLink ? "Copied!" : "Copy"}
+        <button
+          style={S.btn("outline", true)}
+          onClick={() => {
+            navigator.clipboard.writeText(applyUrl);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+        >
+          <Icon n={copiedLink ? "check" : "content_copy"} size={13} />
+          {copiedLink ? "Copied!" : "Copy"}
         </button>
         <button style={S.btn(project.apply_enabled ? "danger" : "success", true)} onClick={toggleApplyLink}>
           <Icon n={project.apply_enabled ? "link_off" : "link"} size={13} />
@@ -4263,19 +4380,33 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       {/* ── Tab toggle ── */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
         <button
-          style={{ padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
-            cursor: 'pointer', border: 'none',
+          style={{
+            padding: '6px 16px',
+            borderRadius: '20px',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            border: 'none',
             backgroundColor: poolTab === 'matched' ? C.primary : C.surface,
-            color: poolTab === 'matched' ? '#fff' : C.muted }}
-          onClick={() => setPoolTab('matched')}>
+            color: poolTab === 'matched' ? '#fff' : C.muted
+          }}
+          onClick={() => setPoolTab('matched')}
+        >
           <Icon n='auto_awesome' size={13} />{` Matched (${matchedCandidates.length})`}
         </button>
         <button
-          style={{ padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: '600',
-            cursor: 'pointer', border: 'none',
+          style={{
+            padding: '6px 16px',
+            borderRadius: '20px',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            border: 'none',
             backgroundColor: poolTab === 'applied' ? C.success : C.surface,
-            color: poolTab === 'applied' ? '#fff' : C.muted }}
-          onClick={() => setPoolTab('applied')}>
+            color: poolTab === 'applied' ? '#fff' : C.muted
+          }}
+          onClick={() => setPoolTab('applied')}
+        >
           <Icon n='inbox' size={13} />{` Applied (${appliedCandidates.length})`}
         </button>
       </div>
@@ -4298,26 +4429,38 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
                     <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>{c.name || "—"}</div>
-                    <div style={{ fontSize: "12px", color: C.muted }}>{[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}</div>
+                    <div style={{ fontSize: "12px", color: C.muted }}>
+                      {[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}
+                    </div>
                   </div>
                   {score != null && (
-                    <span style={{ background: scoreBg(score), color: scoreColor(score),
-                      padding: "3px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "700" }}>
+                    <span style={{
+                      background: scoreBg(score),
+                      color: scoreColor(score),
+                      padding: "3px 10px",
+                      borderRadius: "20px",
+                      fontSize: "13px",
+                      fontWeight: "700"
+                    }}>
                       {Math.round(score * 100)}%
                     </span>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", alignItems: "center" }}>
                   <span style={S.badge(badge.type)}>{badge.label}</span>
-                  <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
-                  <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
+                  <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}>
+                    <Icon n="person" size={12} />View
+                  </button>
+                  <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}>
+                    <Icon n="hub" size={12} />Similar
+                  </button>
                   {poolTab === 'applied' && (
                     <button style={{ ...S.btn('outline', true), fontSize: '11px' }} onClick={() => handleAddCandidate(c.candidate_id)}>
                       <Icon n='add' size={12} /> Add to Matched
                     </button>
                   )}
                   {c.is_active
-                    ? <button style={S.btn("danger", true)} onClick={() => removeCand(c.candidate_id)}>Remove</button>
+                    ? <button style={S.btn("danger", true)} onClick={() => setRemoveConfirm(c)}>Remove</button>
                     : <button style={S.btn("success", true)} onClick={() => restoreCand(c.candidate_id)}>Restore</button>}
                 </div>
               </div>
@@ -4334,15 +4477,21 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
               {displayCandidates.map(c => {
                 const badge = srcBadge(c.source);
                 return (
-                  <tr key={c.candidate_id}
+                  <tr
+                    key={c.candidate_id}
                     style={{ opacity: c.is_active ? 1 : 0.4 }}
                     onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
-                    onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}
+                  >
                     <td style={{ ...S.td, width: "60px", textAlign: "center" }}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
-                          <div style={{ fontSize: "17px", fontWeight: "800", fontFamily: fontH,
-                            color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error }}>
+                          <div style={{
+                            fontSize: "17px",
+                            fontWeight: "800",
+                            fontFamily: fontH,
+                            color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error
+                          }}>
                             {Math.round(c.match_score * 100)}
                           </div>
                           <div style={{ fontSize: "9px", color: C.muted, fontWeight: "700", textTransform: "uppercase" }}>match</div>
@@ -4353,19 +4502,23 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                       <div style={{ fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || "—"}</div>
                       <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_company || "—"}</div>
                     </td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_designation || "—"}</td>
+                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.current_designation || "—"}
+                    </td>
                     <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
                       {c.total_experience != null ? `${c.total_experience}y` : "—"}
                     </td>
-                    <td style={{ ...S.td, color: C.muted, fontSize: "12px", maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>{c.location || "—"}</td>
+                    <td style={{ ...S.td, color: C.muted, fontSize: "12px", maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>
+                      {c.location || "—"}
+                    </td>
                     <td style={S.td}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                          <ScorePill label="Skill" value={c.skill_score      ?? 0} color={C.success} />
-                          <ScorePill label="Sem"   value={c.vector_score     ?? 0} color={C.primary} />
-                          <ScorePill label="Exp"   value={c.experience_score ?? 0} color={C.similar} />
+                          <ScorePill label="Skill" value={c.skill_score ?? 0} color={C.success} />
+                          <ScorePill label="Sem" value={c.vector_score ?? 0} color={C.primary} />
+                          <ScorePill label="Exp" value={c.experience_score ?? 0} color={C.similar} />
                           {c.domain_score != null && (
-                            <ScorePill label="Dom"  value={c.domain_score}        color={C.info} />
+                            <ScorePill label="Dom" value={c.domain_score} color={C.info} />
                           )}
                         </div>
                       ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
@@ -4373,15 +4526,19 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                     <td style={S.td}><span style={S.badge(badge.type)}>{badge.label}</span></td>
                     <td style={{ ...S.td, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                        <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
-                        <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
+                        <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}>
+                          <Icon n="person" size={12} />View
+                        </button>
+                        <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}>
+                          <Icon n="hub" size={12} />Similar
+                        </button>
                         {poolTab === 'applied' && (
                           <button style={{ ...S.btn('outline', true), fontSize: '11px' }} onClick={() => handleAddCandidate(c.candidate_id)}>
                             <Icon n='add' size={12} /> Add to Matched
                           </button>
                         )}
                         {c.is_active
-                          ? <button style={S.btn("danger", true)} onClick={() => removeCand(c.candidate_id)}>Remove</button>
+                          ? <button style={S.btn("danger", true)} onClick={() => setRemoveConfirm(c)}>Remove</button>
                           : <button style={S.btn("success", true)} onClick={() => restoreCand(c.candidate_id)}>Restore</button>}
                       </div>
                     </td>
@@ -4404,7 +4561,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         />
       )}
 
-      {/* ── Bulk CV Upload Modal — NEW ── */}
+      {/* ── Bulk CV Upload Modal ── */}
       {showBulkUpload && (
         <BulkCvUploadModal
           project={project}
@@ -4412,10 +4569,80 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
           onComplete={fetchCandidates}
         />
       )}
+
+      {/* ── Remove Candidate Confirmation Modal ── */}
+      {removeConfirm && (
+        <div style={S.modal} onClick={() => setRemoveConfirm(null)}>
+          <div style={{ ...S.modalWrap, maxWidth: "420px" }} onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  backgroundColor: C.errorLight,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}>
+                  <Icon n="person_remove" size={15} color={C.error} />
+                </div>
+                <span style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>
+                  Remove Candidate
+                </span>
+              </div>
+              <button
+                onClick={() => setRemoveConfirm(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
+              >
+                <Icon n="close" size={20} />
+              </button>
+            </div>
+            <div style={S.modalBody}>
+              <div style={{ fontSize: "14px", fontWeight: "700", color: C.text, marginBottom: "6px", fontFamily: fontH }}>
+                {removeConfirm.name || "This candidate"}
+              </div>
+              <div style={{ fontSize: "12px", color: C.muted, marginBottom: "16px" }}>
+                {[removeConfirm.current_designation, removeConfirm.current_company].filter(Boolean).join(" · ")}
+              </div>
+              <div style={{
+                backgroundColor: C.warningLight,
+                border: `1px solid rgba(217,119,6,0.25)`,
+                borderRadius: "10px",
+                padding: "12px 14px",
+                fontSize: "13px",
+                color: C.warning,
+                lineHeight: "1.6",
+                display: "flex",
+                gap: "8px",
+                alignItems: "flex-start",
+              }}>
+                <Icon n="warning" size={15} color={C.warning} style={{ flexShrink: 0, marginTop: "2px" }} />
+                <span>
+                  Removing this candidate will keep them out of this project,
+                  even after re-running match.{" "}
+                  <strong>This only affects this project</strong> — they remain
+                  in the candidate database and can still match on other projects.
+                </span>
+              </div>
+            </div>
+            <div style={S.modalFoot}>
+              <button
+                style={S.btn("danger")}
+                onClick={() => removeCand(removeConfirm.candidate_id)}
+              >
+                <Icon n="person_remove" size={14} />Confirm Remove
+              </button>
+              <button style={S.btn("outline")} onClick={() => setRemoveConfirm(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
 // ─── GENERATE REPORT MODAL ────────────────────────────────────────────────────
 function GenerateReportModal({ project, allCandidates, matchedCandidates, shortlistedCandidates, onClose }) {
   const [step,          setStep]          = useState('type');
