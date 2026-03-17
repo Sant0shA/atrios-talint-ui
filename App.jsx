@@ -2490,7 +2490,6 @@ function ApplyPage({ slug }) {
     </div>
   );
 }
-
 // ─── PROJECTS TAB ─────────────────────────────────────────────────────────────
 function ProjectsTab({ onViewCandidate }) {
   const isMobile = useIsMobile();
@@ -2504,6 +2503,10 @@ function ProjectsTab({ onViewCandidate }) {
   const [noteSaving,     setNoteSaving]     = useState(false);
   const [noteMsg,        setNoteMsg]        = useState("");
 
+  // Kebab menu state — tracks which card's menu is open
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [archiving,  setArchiving]  = useState(null);  // project id being archived
+
   const fetchProjects = useCallback(async (archived) => {
     setLoading(true);
     try {
@@ -2514,6 +2517,14 @@ function ProjectsTab({ onViewCandidate }) {
   }, []);
 
   useEffect(() => { fetchProjects(showArchived); }, [showArchived]);
+
+  // Close kebab menu on outside click
+  useEffect(() => {
+    if (!openMenuId) return;
+    const close = () => setOpenMenuId(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [openMenuId]);
 
   const saveNote = async () => {
     setNoteSaving(true); setNoteMsg("");
@@ -2526,23 +2537,52 @@ function ProjectsTab({ onViewCandidate }) {
         setNoteMsg("saved");
         fetchProjects(showArchived);
         setTimeout(() => { setEditingProject(null); setNoteMsg(""); }, 1500);
-      } else {
-        setNoteMsg("error");
-      }
+      } else { setNoteMsg("error"); }
     } catch { setNoteMsg("error"); }
     finally { setNoteSaving(false); }
   };
 
+  const handleArchive = async (e, p) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    setArchiving(p.id);
+    try {
+      await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" });
+      fetchProjects(showArchived);
+    } finally { setArchiving(null); }
+  };
+
+  const handleUnarchive = async (e, p) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+    setArchiving(p.id);
+    try {
+      await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" });
+      fetchProjects(showArchived);
+    } finally { setArchiving(null); }
+  };
+
   if (view === "create")
-    return <CreateProjectModal onCreated={() => { fetchProjects(showArchived); setView("list"); }} onCancel={() => setView("list")} />;
+    return <CreateProjectModal
+      onCreated={() => { fetchProjects(showArchived); setView("list"); }}
+      onCancel={() => setView("list")} />;
   if (view === "detail" && selProject)
-    return <ProjectDetailPage project={selProject} onBack={() => { setView("list"); fetchProjects(showArchived); }} onViewCandidate={onViewCandidate} />;
+    return <ProjectDetailPage
+      project={selProject}
+      onBack={() => { setView("list"); fetchProjects(showArchived); }}
+      onViewCandidate={onViewCandidate} />;
 
   const scoreColor = s => s >= 0.7 ? C.success : s >= 0.5 ? C.warning : C.error;
 
   return (
     <div>
-      {!isMobile && <><div style={S.pageTitle}>Projects</div><div style={S.pageSub}>Manage hiring projects · match candidates · share apply links</div></>}
+      {!isMobile && (
+        <>
+          <div style={S.pageTitle}>Projects</div>
+          <div style={S.pageSub}>Manage hiring projects · match candidates · share apply links</div>
+        </>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <label style={{ fontSize: "13px", color: C.muted, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
           <input type="checkbox" checked={showArchived} onChange={e => setShowArc(e.target.checked)}
@@ -2577,36 +2617,60 @@ function ProjectsTab({ onViewCandidate }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))",
+        gap: "16px",
+      }}>
         {projects.map(p => (
           <div key={p.id}
-            style={{ backgroundColor: C.white, borderRadius: "14px",
+            style={{
+              backgroundColor: C.white, borderRadius: "14px",
               border: `1px solid ${p.is_archived ? C.border : C.borderMid}`,
               padding: "20px 22px", cursor: "pointer",
               opacity: p.is_archived ? 0.65 : 1,
-              boxShadow: "0 1px 4px rgba(98,100,244,0.04)", transition: "box-shadow 0.15s, transform 0.15s" }}
-            onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 6px 20px rgba(98,100,244,0.10)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
-            onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(98,100,244,0.04)"; e.currentTarget.style.transform = ""; }}
+              boxShadow: "0 1px 4px rgba(98,100,244,0.04)",
+              transition: "box-shadow 0.15s, transform 0.15s",
+              position: "relative",   // needed for kebab dropdown positioning
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.boxShadow = "0 6px 20px rgba(98,100,244,0.10)";
+              e.currentTarget.style.transform = "translateY(-2px)";
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.boxShadow = "0 1px 4px rgba(98,100,244,0.04)";
+              e.currentTarget.style.transform = "";
+            }}
             onClick={() => { setSel(p); setView("detail"); }}>
 
+            {/* Archive-prompted banner */}
             {p.archive_prompted && !p.is_archived && (
-              <div style={{ background: C.warningLight, border: `1px solid rgba(217,119,6,0.25)`,
+              <div style={{
+                background: C.warningLight, border: `1px solid rgba(217,119,6,0.25)`,
                 borderRadius: "8px", padding: "8px 12px", marginBottom: "12px",
-                fontSize: "12px", color: C.warning }}
+                fontSize: "12px", color: C.warning,
+              }}
                 onClick={e => e.stopPropagation()}>
                 ⏰ Inactive for 3 months — Archive it?
                 <span style={{ marginLeft: "8px", fontWeight: "700", cursor: "pointer", color: C.primary }}
-                  onClick={async () => { await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" }); fetchProjects(showArchived); }}>Archive</span>
+                  onClick={e => handleArchive(e, p)}>Archive</span>
                 <span style={{ marginLeft: "8px", fontWeight: "700", cursor: "pointer", color: C.muted }}
-                  onClick={async () => { await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" }); fetchProjects(showArchived); }}>Keep Active</span>
+                  onClick={e => { e.stopPropagation(); fetchProjects(showArchived); }}>Keep Active</span>
               </div>
             )}
 
-            <div style={{ fontFamily: fontH, fontSize: "15px", fontWeight: "700", color: C.text, marginBottom: "10px" }}>{p.title}</div>
+            {/* Title */}
+            <div style={{ fontFamily: fontH, fontSize: "15px", fontWeight: "700",
+              color: C.text, marginBottom: "10px", paddingRight: "28px" }}>
+              {p.title}
+            </div>
 
+            {/* Meta row */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
               <span style={{ fontSize: "12px", color: C.muted }}>{p.candidate_count ?? 0} candidates</span>
-              {p.inbound_count > 0 && <span style={S.badge("success")}>{p.inbound_count} Applied</span>}
+              {p.inbound_count > 0 && (
+                <span style={S.badge("success")}>{p.inbound_count} Applied</span>
+              )}
               {p.match_score_range && (
                 <span style={{ fontSize: "12px", color: C.muted }}>
                   Top: <span style={{ color: scoreColor(p.match_score_range.max), fontWeight: "700" }}>
@@ -2614,15 +2678,24 @@ function ProjectsTab({ onViewCandidate }) {
                   </span>
                 </span>
               )}
+              {p.is_archived && (
+                <span style={S.badge("")}>Archived</span>
+              )}
             </div>
 
+            {/* Footer row */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "11px", color: C.muted }}>{fmtDate(p.last_activity_at || p.created_at)}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "11px", color: C.muted }}>
+                {fmtDate(p.last_activity_at || p.created_at)}
+              </span>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                {/* Edit note button — active projects only */}
                 {!p.is_archived && (
                   <button
-                    style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
-                      color: C.muted, display: "flex", alignItems: "center", borderRadius: "6px" }}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      padding: "3px 5px", color: C.muted, display: "flex",
+                      alignItems: "center", borderRadius: "6px" }}
                     title="Edit recruiter note"
                     onClick={e => {
                       e.stopPropagation();
@@ -2633,9 +2706,80 @@ function ProjectsTab({ onViewCandidate }) {
                     <Icon n="edit_note" size={16} />
                   </button>
                 )}
+
+                {/* Apply link badge */}
                 {p.apply_enabled && !p.is_archived
                   ? <span style={S.badge("info")}>Apply Link On</span>
-                  : <span style={S.badge("")}>Link Off</span>}
+                  : !p.is_archived && <span style={S.badge("")}>Link Off</span>
+                }
+
+                {/* ── Kebab menu ────────────────────────────────────────── */}
+                <div style={{ position: "relative" }}>
+                  <button
+                    title="More options"
+                    onClick={e => {
+                      e.stopPropagation();
+                      setOpenMenuId(openMenuId === p.id ? null : p.id);
+                    }}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      padding: "3px 5px", color: C.muted, display: "flex",
+                      alignItems: "center", borderRadius: "6px",
+                      opacity: archiving === p.id ? 0.5 : 1,
+                    }}
+                    disabled={archiving === p.id}>
+                    {archiving === p.id
+                      ? <div style={{ width: "14px", height: "14px",
+                          border: `2px solid ${C.muted}`, borderTopColor: "transparent",
+                          borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+                      : <Icon n="more_vert" size={18} />
+                    }
+                  </button>
+
+                  {/* Dropdown */}
+                  {openMenuId === p.id && (
+                    <div
+                      onClick={e => e.stopPropagation()}
+                      style={{
+                        position: "absolute", right: 0, bottom: "calc(100% + 4px)",
+                        backgroundColor: C.white, border: `1px solid ${C.border}`,
+                        borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+                        minWidth: "160px", zIndex: 200, overflow: "hidden",
+                      }}>
+                      {!p.is_archived ? (
+                        <button
+                          onClick={e => handleArchive(e, p)}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center",
+                            gap: "8px", padding: "10px 14px", background: "none",
+                            border: "none", cursor: "pointer", fontSize: "13px",
+                            color: C.textMid, fontFamily: fontB, textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                          onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                          <Icon n="inventory_2" size={15} color={C.muted} />
+                          Archive project
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => handleUnarchive(e, p)}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center",
+                            gap: "8px", padding: "10px 14px", background: "none",
+                            border: "none", cursor: "pointer", fontSize: "13px",
+                            color: C.textMid, fontFamily: fontB, textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                          onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                          <Icon n="unarchive" size={15} color={C.success} />
+                          Unarchive project
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* ── end kebab ─────────────────────────────────────────── */}
+
               </div>
             </div>
           </div>
@@ -2688,8 +2832,7 @@ function ProjectsTab({ onViewCandidate }) {
                 onClick={saveNote} disabled={noteSaving}>
                 <Icon n="save" size={14} />{noteSaving ? "Saving…" : "Save Note"}
               </button>
-              <button style={S.btn("outline")}
-                onClick={() => setEditingProject(null)} disabled={noteSaving}>
+              <button style={S.btn("outline")} onClick={() => setEditingProject(null)} disabled={noteSaving}>
                 Cancel
               </button>
             </div>
@@ -2701,68 +2844,755 @@ function ProjectsTab({ onViewCandidate }) {
 }
 
 // ─── CREATE PROJECT ───────────────────────────────────────────────────────────
+//
+// Handles new project creation:
+//   1. Form — title, sector dropdown, JD, client note
+//      - Sector dropdown fetched from GET /api/v1/sectors
+//      - Live # hashtag preview for #min_exp, #max_exp, #skills
+//      - #company_type hashtag still works as correction path
+//      - Inline collapsible guide with copy-paste template
+//   2. POST /api/v1/projects/preview → parse only, NO DB write (2–4s)
+//   3. ParseReviewModal — recruiter reviews parsed fields
+//      → Go Back: returns to form (fields preserved), zero orphans
+//      → Confirm: POST /api/v1/projects → creates project exactly once
+//
+// Depends on:
+//   ParseReviewModal — defined in // ─── PROJECT PARSE REVIEW MODAL ───
+//   C, S, Icon, font, fontH, fontB, useIsMobile — global app constants
+//   apiFetch — global fetch helper
+
+// ---------------------------------------------------------------------------
+// Shared helpers — also used by ParseReviewModal, defined here first
+// ---------------------------------------------------------------------------
+
+function parseHashtagsFromNote(note, sectorMap) {
+  const result = { company_type: null, min_exp: null, max_exp: null, skills: [] };
+  if (!note) return result;
+
+  const kvPattern = /#(company_type|min_exp|max_exp)\s*:\s*([^\s#]+)/gi;
+  let cleaned = note;
+  const validTypes = sectorMap || {};
+  let m;
+
+  while ((m = kvPattern.exec(note)) !== null) {
+    const key = m[1].toLowerCase();
+    const val = m[2].trim().toLowerCase();
+    if (key === "company_type") {
+      if (validTypes[val]) result.company_type = val;
+    } else if (key === "min_exp") {
+      const n = parseInt(val);
+      if (!isNaN(n)) result.min_exp = n;
+    } else if (key === "max_exp") {
+      const n = parseInt(val);
+      if (!isNaN(n)) result.max_exp = n;
+    }
+    cleaned = cleaned.replace(m[0], "");
+  }
+
+  const skillPattern = /#([^#\n]+)/g;
+  while ((m = skillPattern.exec(cleaned)) !== null) {
+    const skill = m[1].trim().replace(/[.,;:!?]+$/, "").trim();
+    if (skill && skill.length >= 2) result.skills.push(skill.toLowerCase());
+  }
+
+  return result;
+}
+
+const GUIDE_TEMPLATE =
+  `#min_exp:3  #max_exp:8\n#fundraising #donor management #grant writing #stakeholder engagement\n\n// To override sector: #company_type:ngo`;
+
+
+// ---------------------------------------------------------------------------
+// LiveHashtagPreview
+// ---------------------------------------------------------------------------
+function LiveHashtagPreview({ note, sectorMap, sectorLabels }) {
+  const parsed = parseHashtagsFromNote(note, sectorMap);
+  const hasAny = parsed.company_type
+    || parsed.min_exp !== null
+    || parsed.max_exp !== null
+    || parsed.skills.length > 0;
+
+  if (!hasAny) return null;
+
+  return (
+    <div style={{
+      marginTop: "10px", padding: "10px 13px", borderRadius: "10px",
+      backgroundColor: "rgba(98,100,244,0.05)",
+      border: "1px solid rgba(98,100,244,0.15)",
+    }}>
+      <div style={{
+        fontSize: "10px", fontWeight: "700", color: C.primary,
+        textTransform: "uppercase", letterSpacing: "0.1em",
+        marginBottom: "8px", fontFamily: fontH,
+        display: "flex", alignItems: "center", gap: "5px",
+      }}>
+        <Icon n="auto_awesome" size={12} color={C.primary} />
+        Detected # overrides
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+        {parsed.company_type && (
+          <span style={{
+            padding: "2px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: "700",
+            backgroundColor: "rgba(217,119,6,0.1)", color: C.warning, fontFamily: font,
+            border: "1px solid rgba(217,119,6,0.2)",
+          }}>
+            🏢 {sectorLabels[parsed.company_type] || parsed.company_type}
+            <span style={{ fontSize: "10px", marginLeft: "4px", opacity: 0.8 }}>
+              (overrides dropdown)
+            </span>
+          </span>
+        )}
+        {parsed.min_exp !== null && (
+          <span style={{
+            padding: "2px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: "700",
+            backgroundColor: "rgba(59,178,115,0.1)", color: "#2a7a50", fontFamily: font,
+          }}>↑ min {parsed.min_exp} yrs</span>
+        )}
+        {parsed.max_exp !== null && (
+          <span style={{
+            padding: "2px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: "700",
+            backgroundColor: "rgba(59,178,115,0.1)", color: "#2a7a50", fontFamily: font,
+          }}>↓ max {parsed.max_exp} yrs</span>
+        )}
+        {parsed.skills.map((s, i) => (
+          <span key={i} style={{
+            padding: "2px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: "600",
+            backgroundColor: C.primaryDim, color: C.primary, fontFamily: font,
+            border: "1px solid rgba(98,100,244,0.15)",
+          }}>#{s}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// InlineGuide
+// ---------------------------------------------------------------------------
+function InlineGuide({ expanded, onToggle, sectors }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyTemplate = () => {
+    navigator.clipboard.writeText(GUIDE_TEMPLATE).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div style={{
+      borderRadius: "10px", border: `1px solid ${C.border}`,
+      backgroundColor: "#faf9fe", overflow: "hidden", marginTop: "6px",
+    }}>
+      <button onClick={onToggle} style={{
+        width: "100%", display: "flex", alignItems: "center",
+        justifyContent: "space-between", padding: "9px 13px",
+        background: "none", border: "none", cursor: "pointer",
+        color: C.primary, fontFamily: fontB,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px",
+          fontSize: "12px", fontWeight: "600" }}>
+          <Icon n="tips_and_updates" size={14} color={C.primary} />
+          How to write a strong brief — and use{" "}
+          <code style={{ backgroundColor: C.primaryDim, padding: "1px 5px",
+            borderRadius: "4px", fontFamily: font, fontSize: "11px" }}>#</code>{" "}overrides
+        </div>
+        <Icon n={expanded ? "expand_less" : "expand_more"} size={16} color={C.muted} />
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 13px 13px", borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginTop: "13px" }}>
+            <div>
+              <div style={{ fontSize: "10px", fontWeight: "700", color: C.muted,
+                textTransform: "uppercase", letterSpacing: "0.1em",
+                marginBottom: "8px", fontFamily: fontH }}>Job Description</div>
+              {[
+                ["check_circle", C.success, "Paste the full JD — don't summarise"],
+                ["check_circle", C.success, "Include responsibilities, requirements, sector context"],
+                ["check_circle", C.success, "Longer JDs produce better skill extraction"],
+                ["cancel",       C.error,   "Don't remove company name if it signals sector"],
+              ].map(([icon, color, text], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "7px",
+                  fontSize: "12px", color: C.textMid, marginBottom: "6px", lineHeight: "1.5" }}>
+                  <Icon n={icon} size={13} color={color} style={{ marginTop: "2px", flexShrink: 0 }} />
+                  {text}
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize: "10px", fontWeight: "700", color: C.muted,
+                textTransform: "uppercase", letterSpacing: "0.1em",
+                marginBottom: "8px", fontFamily: fontH }}>Client / Recruiter Note</div>
+              {[
+                ["check_circle", C.success, "Add context the JD doesn't state — deal-breakers, preferences"],
+                ["check_circle", C.success, "Use #skill to add skills the parser might miss"],
+                ["check_circle", C.success, "#min_exp / #max_exp override parsed experience band"],
+                ["check_circle", C.success, "#company_type:sector overrides the dropdown for quick fix"],
+                ["cancel",       C.error,   "Don't repeat what's already clear in the JD"],
+              ].map(([icon, color, text], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "7px",
+                  fontSize: "12px", color: C.textMid, marginBottom: "6px", lineHeight: "1.5" }}>
+                  <Icon n={icon} size={13} color={color} style={{ marginTop: "2px", flexShrink: 0 }} />
+                  {text}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginTop: "12px", borderRadius: "8px",
+            backgroundColor: "#f0f0f8", border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "7px 11px", borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ fontSize: "10px", fontWeight: "700", color: C.muted,
+                textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: fontH }}>
+                # override template — paste into Client Note
+              </span>
+              <button onClick={copyTemplate} style={{
+                display: "flex", alignItems: "center", gap: "4px", fontSize: "11px",
+                fontWeight: "600", color: copied ? C.success : C.primary,
+                background: "none", border: "none", cursor: "pointer",
+                fontFamily: fontB, padding: "2px 0",
+              }}>
+                <Icon n={copied ? "check" : "content_copy"} size={13}
+                  color={copied ? C.success : C.primary} />
+                {copied ? "Copied!" : "Copy template"}
+              </button>
+            </div>
+            <pre style={{ margin: 0, padding: "10px 12px", fontSize: "12px", fontFamily: font,
+              color: C.primary, lineHeight: "1.7", overflowX: "auto", whiteSpace: "pre-wrap" }}>
+{`#min_exp:3  #max_exp:8
+#fundraising #donor management #grant writing #stakeholder engagement
+
+// To override sector: #company_type:ngo`}
+            </pre>
+          </div>
+
+          {sectors.length > 0 && (
+            <div style={{ marginTop: "10px", fontSize: "11px", color: C.muted, lineHeight: "1.8" }}>
+              <span style={{ fontWeight: "700" }}>Valid #company_type values: </span>
+              {sectors.map((s, i, a) => (
+                <span key={s.value}>
+                  <code style={{ backgroundColor: C.primaryDim, color: C.primary,
+                    padding: "1px 5px", borderRadius: "4px",
+                    fontFamily: font, fontSize: "10px" }}>{s.value}</code>
+                  {i < a.length - 1 ? " · " : ""}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// CreateProjectModal
+// ---------------------------------------------------------------------------
 function CreateProjectModal({ onCreated, onCancel }) {
   const isMobile = useIsMobile();
-  const [form,    setForm]    = useState({ title: "", jd_text: "", client_note: "" });
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState("");
 
-  const handleSubmit = async () => {
-    if (!form.title.trim()) { setError("Project title is required."); return; }
-    if (form.jd_text.trim().length < 50) { setError("Please paste the full job description (at least 50 characters)."); return; }
-    setLoading(true); setError("");
+  const [form, setForm] = useState({
+    title: "", jd_text: "", company_type: "", client_note: "",
+  });
+  const [parsing,    setParsing]    = useState(false);   // preview call in flight
+  const [confirming, setConfirming] = useState(false);   // create call in flight
+  const [error,      setError]      = useState("");
+  const [guideOpen,  setGuideOpen]  = useState(false);
+  const [preview,    setPreview]    = useState(null);    // parsed data, no DB write yet
+
+  const [sectors,      setSectors]      = useState([]);
+  const [sectorMap,    setSectorMap]    = useState({});
+  const [sectorLabels, setSectorLabels] = useState({});
+
+  useEffect(() => {
+    apiFetch("/api/v1/sectors")
+      .then(r => r.json())
+      .then(d => {
+        const list = d.sectors || [];
+        setSectors(list);
+        const map = {}, labels = {};
+        list.forEach(s => { map[s.value] = true; labels[s.value] = s.label; });
+        setSectorMap(map);
+        setSectorLabels(labels);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Step 1 — call /preview, NO DB write, show review modal
+  const handlePreview = async () => {
+    if (!form.title.trim())                    { setError("Project title is required."); return; }
+    if (form.jd_text.trim().length < 50)       { setError("Please paste the full job description (at least 50 characters)."); return; }
+    setParsing(true); setError("");
+    try {
+      const r = await apiFetch("/api/v1/projects/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          title:        form.title.trim(),
+          jd_text:      form.jd_text.trim(),
+          company_type: form.company_type || null,
+          client_note:  form.client_note.trim() || null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.detail || "Failed to parse JD."); setParsing(false); return; }
+      setPreview(d);
+    } catch {
+      setError("Network error.");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  // Step 2a — recruiter happy → POST /projects (creates project exactly once)
+  const handleConfirm = async () => {
+    setConfirming(true); setError("");
     try {
       const r = await apiFetch("/api/v1/projects", {
         method: "POST",
-        body: JSON.stringify({ title: form.title.trim(), jd_text: form.jd_text.trim(), client_note: form.client_note.trim() || null }),
+        body: JSON.stringify({
+          title:        form.title.trim(),
+          jd_text:      form.jd_text.trim(),
+          company_type: form.company_type || null,
+          client_note:  form.client_note.trim() || null,
+        }),
       });
       const d = await r.json();
-      if (!r.ok) { setError(d.detail || "Failed to create project."); setLoading(false); return; }
+      if (!r.ok) { setError(d.detail || "Failed to create project."); setConfirming(false); return; }
       onCreated(d);
-    } catch { setError("Network error."); setLoading(false); }
+    } catch {
+      setError("Network error.");
+      setConfirming(false);
+    }
   };
+
+  // Step 2b — recruiter not happy → back to form, fields preserved, zero orphans
+  const handleBack = () => setPreview(null);
 
   const ta = { ...S.input, resize: "vertical", marginTop: "6px" };
 
   return (
-    <div>
-      {!isMobile && <><div style={S.pageTitle}>New Project</div><div style={S.pageSub}>Paste a JD to create a project and start matching candidates</div></>}
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
-        <button style={S.btn("outline", true)} onClick={onCancel}><Icon n="arrow_back" size={14} />Back</button>
-      </div>
-      <div style={{ ...S.card, maxWidth: "680px" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
-          <div>
-            <label style={S.label}>Project Title *</label>
-            <input style={ta} placeholder="e.g. Senior PM — FinTech · HDFC"
-              value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-          </div>
-          <div>
-            <label style={S.label}>Job Description *</label>
-            <textarea style={{ ...ta, height: "220px" }} placeholder="Paste the full JD here…"
-              value={form.jd_text} onChange={e => setForm(f => ({ ...f, jd_text: e.target.value }))} />
-          </div>
-          <div>
-            <label style={S.label}>Client / Recruiter Note <span style={{ fontWeight: "400", color: C.muted, textTransform: "none", letterSpacing: 0 }}>(optional, internal only)</span></label>
-            <textarea style={{ ...ta, height: "90px" }}
-              placeholder="e.g. Client prefers ex-BFSI background. Tier 2 college OK."
-              value={form.client_note} onChange={e => setForm(f => ({ ...f, client_note: e.target.value }))} />
-            <div style={{ fontSize: "11px", color: C.muted, marginTop: "4px" }}>Never shown to candidates — improves matching quality.</div>
-          </div>
-          {error && <div style={{ background: C.errorLight, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", color: C.error }}>{error}</div>}
-          {loading && (
-            <div style={{ textAlign: "center", color: C.muted, fontSize: "14px", padding: "8px 0" }}>
-              <div className="dot-wave" style={{ display: "inline-flex", gap: "4px", marginRight: "8px" }}><span /><span /><span /></div>
-              Parsing JD and generating embeddings… (2–4 seconds)
+    <>
+      <div>
+        {!isMobile && (
+          <>
+            <div style={S.pageTitle}>New Project</div>
+            <div style={S.pageSub}>Paste a JD to create a project and start matching candidates</div>
+          </>
+        )}
+
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+          <button style={S.btn("outline", true)} onClick={onCancel} disabled={parsing}>
+            <Icon n="arrow_back" size={14} />Back
+          </button>
+        </div>
+
+        <div style={{ ...S.card, maxWidth: "680px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+
+            <div>
+              <label style={S.label}>Project Title *</label>
+              <input style={ta} placeholder="e.g. Senior PM — FinTech · HDFC"
+                value={form.title}
+                onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
             </div>
-          )}
-          <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-            <button style={S.btn("outline")} onClick={onCancel} disabled={loading}>Cancel</button>
-            <button style={{ ...S.btn("primary"), opacity: loading ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading}>
-              <Icon n="add" size={15} />{loading ? "Creating…" : "Create Project"}
-            </button>
+
+            <div>
+              <label style={S.label}>
+                Sector / Company Type
+                <span style={{ fontWeight: "400", color: C.muted, textTransform: "none", letterSpacing: 0 }}>
+                  {" "}(recommended — improves domain matching)
+                </span>
+              </label>
+              <select style={S.select} value={form.company_type}
+                onChange={e => setForm(f => ({ ...f, company_type: e.target.value }))}>
+                <option value="">— Let AI infer from JD —</option>
+                {sectors.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: "11px", color: C.muted, marginTop: "4px" }}>
+                Explicit selection overrides AI inference. Correct later via{" "}
+                <code style={{ backgroundColor: C.primaryDim, color: C.primary,
+                  padding: "1px 5px", borderRadius: "4px", fontFamily: font,
+                  fontSize: "10px" }}>#company_type:value</code> in the client note.
+              </div>
+            </div>
+
+            <div>
+              <label style={S.label}>Job Description *</label>
+              <textarea style={{ ...ta, height: "220px" }} placeholder="Paste the full JD here…"
+                value={form.jd_text}
+                onChange={e => setForm(f => ({ ...f, jd_text: e.target.value }))} />
+            </div>
+
+            <div>
+              <label style={S.label}>
+                Client / Recruiter Note
+                <span style={{ fontWeight: "400", color: C.muted, textTransform: "none", letterSpacing: 0 }}>
+                  {" "}(optional, internal only)
+                </span>
+              </label>
+              <textarea style={{ ...ta, height: "90px" }}
+                placeholder={"Context, deal-breakers, preferences.\nUse # to override: #min_exp:3  #max_exp:8  #fundraising  #company_type:ngo"}
+                value={form.client_note}
+                onChange={e => setForm(f => ({ ...f, client_note: e.target.value }))} />
+
+              <LiveHashtagPreview note={form.client_note} sectorMap={sectorMap} sectorLabels={sectorLabels} />
+
+              <div style={{ fontSize: "11px", color: C.muted, marginTop: "6px" }}>
+                Never shown to candidates · Use{" "}
+                <code style={{ backgroundColor: C.primaryDim, color: C.primary,
+                  padding: "1px 5px", borderRadius: "4px", fontFamily: font,
+                  fontSize: "10px" }}>#</code>{" "}
+                overrides to correct AI extraction after reviewing
+              </div>
+
+              <InlineGuide expanded={guideOpen} onToggle={() => setGuideOpen(o => !o)} sectors={sectors} />
+            </div>
+
+            {error && (
+              <div style={{ background: C.errorLight, borderRadius: "8px",
+                padding: "10px 14px", fontSize: "13px", color: C.error }}>{error}</div>
+            )}
+
+            {parsing && (
+              <div style={{ textAlign: "center", color: C.muted, fontSize: "14px", padding: "8px 0" }}>
+                <div className="dot-wave" style={{ display: "inline-flex", gap: "4px", marginRight: "8px" }}>
+                  <span /><span /><span />
+                </div>
+                Parsing JD… (2–4 seconds)
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button style={S.btn("outline")} onClick={onCancel} disabled={parsing}>Cancel</button>
+              <button style={{ ...S.btn("primary"), opacity: parsing ? 0.6 : 1 }}
+                onClick={handlePreview} disabled={parsing}>
+                <Icon n="manage_search" size={15} />
+                {parsing ? "Parsing…" : "Parse & Review"}
+              </button>
+            </div>
           </div>
         </div>
+      </div>
+
+      {preview && (
+        <ParseReviewModal
+          parsed={preview}
+          form={form}
+          sectorLabels={sectorLabels}
+          sectorMap={sectorMap}
+          onConfirm={handleConfirm}
+          onBack={handleBack}
+          confirming={confirming}
+          error={error}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── PROJECT PARSE REVIEW MODAL ──────────────────────────────────────────────
+//
+// Shown after POST /api/v1/projects returns parsed data.
+// Recruiter reviews extracted fields before confirming.
+//
+// Props:
+//   parsed       — response from POST /projects
+//   form         — { title, company_type, client_note } from create form
+//   sectorLabels — { value: label } map from fetched sectors
+//   sectorMap    — { value: true } set for hashtag validation
+//   onConfirm    — called when recruiter clicks "Confirm & Create Project"
+//   onBack       — called when recruiter clicks "Go Back & Edit"
+//   confirming   — bool, disables buttons while navigating away
+//
+// Depends on:
+//   parseHashtagsFromNote() — defined in // ─── CREATE PROJECT ───
+//   C, S, Icon, font, fontH, fontB — global app constants
+
+function ParseReviewModal({ parsed, form, sectorLabels, sectorMap, onConfirm, onBack, confirming }) {
+  const hashParsed = parseHashtagsFromNote(form.client_note, sectorMap);
+
+  // Skills: merge parsed base + hashtag additions, deduplicated
+  const displaySkills = (() => {
+    const base   = (parsed.must_have_skills || []).map(s => s.toLowerCase());
+    const tags   = hashParsed.skills;
+    const seen   = new Set(base);
+    const merged = [...base];
+    tags.forEach(s => { if (!seen.has(s)) { seen.add(s); merged.push(s); } });
+    return { base, tags, merged };
+  })();
+
+  // company_type priority: hashtag > form dropdown > parsed
+  const displayCompanyType = hashParsed.company_type || form.company_type || parsed.company_type;
+  const ctSource = hashParsed.company_type ? "hashtag"
+    : form.company_type ? "dropdown"
+    : parsed.company_type ? "parser"
+    : null;
+
+  // min/max experience: hashtag > parsed
+  const displayMinExp = hashParsed.min_exp !== null ? hashParsed.min_exp : parsed.min_experience;
+  const displayMaxExp = hashParsed.max_exp !== null ? hashParsed.max_exp : parsed.max_experience;
+
+  const hasWarnings = (
+    !displayCompanyType ||
+    displayMinExp === null ||
+    displayMaxExp === null ||
+    displaySkills.merged.length === 0
+  );
+
+  const ctSourceBadge = ctSource ? (
+    <span style={{
+      fontSize: "10px", color: ctSource === "hashtag" ? C.warning : C.primary,
+      backgroundColor: ctSource === "hashtag" ? "rgba(217,119,6,0.1)" : C.primaryDim,
+      padding: "1px 6px", borderRadius: "4px", fontFamily: font,
+    }}>
+      via {ctSource}
+    </span>
+  ) : null;
+
+  // Reusable field card
+  const Field = ({ label, value, warn, children }) => (
+    <div style={{
+      padding: "12px 14px", borderRadius: "10px",
+      backgroundColor: warn  ? "rgba(217,119,6,0.06)"
+                      : value ? "rgba(59,178,115,0.05)"
+                      : C.surface,
+      border: `1px solid ${
+        warn  ? "rgba(217,119,6,0.2)"
+              : value ? "rgba(59,178,115,0.2)"
+              : C.border
+      }`,
+    }}>
+      <div style={{
+        fontSize: "10px", fontWeight: "700", color: C.muted,
+        textTransform: "uppercase", letterSpacing: "0.1em",
+        marginBottom: "6px", fontFamily: fontH,
+        display: "flex", alignItems: "center", gap: "5px",
+      }}>
+        <Icon
+          n={value ? "check_circle" : "warning"} size={12}
+          color={value ? C.success : warn ? C.warning : C.muted}
+        />
+        {label}
+      </div>
+      {children || (
+        <div style={{ fontSize: "13px", color: value ? C.text : C.muted, fontWeight: "600" }}>
+          {value !== null && value !== undefined
+            ? String(value)
+            : <span style={{ color: C.warning, fontStyle: "italic", fontWeight: "400" }}>
+                null — not extracted
+              </span>
+          }
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={S.modal} onClick={e => e.stopPropagation()}>
+      <div style={{
+        ...S.modalWrap, maxWidth: "560px", maxHeight: "90vh",
+        display: "flex", flexDirection: "column",
+      }}>
+
+        {/* ── Header ── */}
+        <div style={S.modalHead}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{
+              width: "32px", height: "32px", borderRadius: "9px",
+              backgroundColor: C.primaryLight,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Icon n="manage_search" size={17} color={C.primary} />
+            </div>
+            <div>
+              <div style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>
+                Review Parsed Data
+              </div>
+              <div style={{ fontSize: "11px", color: C.muted }}>
+                Verify before confirming — go back to fix via # or dropdown if needed
+              </div>
+            </div>
+          </div>
+          {hasWarnings && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: "5px",
+              fontSize: "11px", fontWeight: "700", color: C.warning,
+              backgroundColor: C.warningLight, padding: "4px 10px", borderRadius: "20px",
+            }}>
+              <Icon n="warning" size={13} color={C.warning} />
+              Needs review
+            </div>
+          )}
+        </div>
+
+        {/* ── Scrollable body ── */}
+        <div style={{ ...S.modalBody, overflowY: "auto", flex: 1 }}>
+
+          {/* Project title */}
+          <div style={{ marginBottom: "4px", fontSize: "12px", color: C.muted }}>Project</div>
+          <div style={{
+            fontSize: "15px", fontWeight: "700", color: C.text,
+            marginBottom: "16px", fontFamily: fontH,
+          }}>
+            {form.title}
+          </div>
+
+          {/* Company type + experience band */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+
+            <Field label="Sector / Company Type" value={displayCompanyType} warn={!displayCompanyType}>
+              {displayCompanyType ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "13px", fontWeight: "700", color: C.text }}>
+                    {sectorLabels[displayCompanyType] || displayCompanyType}
+                  </span>
+                  {ctSourceBadge}
+                </div>
+              ) : null}
+            </Field>
+
+            <Field
+              label="Experience Band"
+              value={displayMinExp !== null || displayMaxExp !== null
+                ? `${displayMinExp ?? "?"} – ${displayMaxExp ?? "?"} yrs`
+                : null}
+              warn={displayMinExp === null && displayMaxExp === null}
+            >
+              {(displayMinExp !== null || displayMaxExp !== null) ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span style={{ fontSize: "13px", fontWeight: "700", color: C.text }}>
+                    {displayMinExp ?? "?"} – {displayMaxExp ?? "?"} yrs
+                  </span>
+                  {(hashParsed.min_exp !== null || hashParsed.max_exp !== null) && (
+                    <span style={{
+                      fontSize: "10px", color: C.primary, backgroundColor: C.primaryDim,
+                      padding: "1px 6px", borderRadius: "4px", fontFamily: font,
+                    }}>via #</span>
+                  )}
+                </div>
+              ) : null}
+            </Field>
+          </div>
+
+          {/* Must-have skills */}
+          <div style={{
+            padding: "12px 14px", borderRadius: "10px", marginBottom: "10px",
+            backgroundColor: displaySkills.merged.length > 0
+              ? "rgba(59,178,115,0.05)" : C.surface,
+            border: `1px solid ${displaySkills.merged.length > 0
+              ? "rgba(59,178,115,0.2)" : C.border}`,
+          }}>
+            <div style={{
+              fontSize: "10px", fontWeight: "700", color: C.muted,
+              textTransform: "uppercase", letterSpacing: "0.1em",
+              marginBottom: "8px", fontFamily: fontH,
+              display: "flex", alignItems: "center", gap: "5px",
+            }}>
+              <Icon
+                n={displaySkills.merged.length > 0 ? "check_circle" : "warning"}
+                size={12}
+                color={displaySkills.merged.length > 0 ? C.success : C.warning}
+              />
+              Must-Have Skills ({displaySkills.merged.length})
+            </div>
+
+            {displaySkills.merged.length > 0 ? (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
+                  {displaySkills.merged.map((s, i) => {
+                    const fromHash = displaySkills.tags.includes(s) && !displaySkills.base.includes(s);
+                    return (
+                      <span key={i} style={{
+                        padding: "2px 9px", borderRadius: "6px",
+                        fontSize: "11px", fontWeight: "600", fontFamily: font,
+                        backgroundColor: fromHash ? C.primaryDim : "rgba(59,178,115,0.1)",
+                        color: fromHash ? C.primary : "#2a7a50",
+                        border: `1px solid ${fromHash
+                          ? "rgba(98,100,244,0.2)" : "rgba(59,178,115,0.2)"}`,
+                      }}>
+                        {fromHash ? "#" : ""}{s}
+                      </span>
+                    );
+                  })}
+                </div>
+                {displaySkills.tags.length > 0 && displaySkills.base.length > 0 && (
+                  <div style={{ marginTop: "8px", fontSize: "11px", color: C.muted }}>
+                    <span style={{ color: "#2a7a50", fontWeight: "600" }}>■</span> from JD
+                    &nbsp;&nbsp;
+                    <span style={{ color: C.primary, fontWeight: "600" }}>#</span> added via hashtag
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ fontSize: "12px", color: C.warning, fontStyle: "italic" }}>
+                No skills extracted — go back and add #skills to the client note
+              </div>
+            )}
+          </div>
+
+          {/* JD Summary */}
+          {parsed.jd_summary && (
+            <div style={{
+              padding: "12px 14px", borderRadius: "10px",
+              backgroundColor: C.surface, border: `1px solid ${C.border}`,
+            }}>
+              <div style={{
+                fontSize: "10px", fontWeight: "700", color: C.muted,
+                textTransform: "uppercase", letterSpacing: "0.1em",
+                marginBottom: "6px", fontFamily: fontH,
+              }}>
+                JD Summary (AI-generated)
+              </div>
+              <div style={{ fontSize: "12px", color: C.textMid, lineHeight: "1.6" }}>
+                {parsed.jd_summary}
+              </div>
+            </div>
+          )}
+
+          {/* Warning banner */}
+          {hasWarnings && (
+            <div style={{
+              marginTop: "12px", padding: "10px 13px", borderRadius: "10px",
+              backgroundColor: C.warningLight,
+              border: "1px solid rgba(217,119,6,0.25)",
+              fontSize: "12px", color: C.warning, lineHeight: "1.6",
+            }}>
+              <div style={{ fontWeight: "700", marginBottom: "3px",
+                display: "flex", alignItems: "center", gap: "5px" }}>
+                <Icon n="info" size={13} color={C.warning} />
+                Missing fields will reduce match quality
+              </div>
+              Go back and fix using the sector dropdown or # overrides in the Client Note.
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={S.modalFoot}>
+          <button
+            style={{ ...S.btn("primary"), opacity: confirming ? 0.65 : 1 }}
+            onClick={onConfirm}
+            disabled={confirming}
+          >
+            <Icon n="check" size={15} />
+            {confirming ? "Creating…" : "Confirm & Create Project"}
+          </button>
+          <button
+            style={S.btn("outline")}
+            onClick={onBack}
+            disabled={confirming}
+          >
+            <Icon n="arrow_back" size={14} />
+            Go Back & Edit
+          </button>
+        </div>
+
       </div>
     </div>
   );
