@@ -4078,22 +4078,85 @@ function BulkCvUploadModal({ project, onClose, onComplete }) {
   );
 }
 
+// ─── QUALITY BADGE ────────────────────────────────────────────────────────────
+function QualityBadge({ label, score, rationale }) {
+  const [hovered, setHovered] = useState(false);
+
+  const cfg = {
+    "Strong fit":   { text: "#3B6D11", bg: "#EAF3DE" },
+    "Probable fit": { text: "#854F0B", bg: "#FAEEDA" },
+    "Weak fit":     { text: "#A32D2D", bg: "#FCEBEB" },
+  };
+  const c = cfg[label] || { text: C.muted, bg: C.surface };
+
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <span
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "3px 10px", borderRadius: 999,
+          fontSize: 11, fontWeight: 600, cursor: "default",
+          background: c.bg, color: c.text, fontFamily: fontB,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.text, flexShrink: 0 }} />
+        {label}
+      </span>
+
+      {hovered && score != null && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+          transform: "translateX(-50%)",
+          background: C.white, border: `1px solid ${C.borderMid}`,
+          borderRadius: 10, padding: "10px 14px",
+          minWidth: 200, maxWidth: 240, zIndex: 200,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+          fontFamily: fontB, pointerEvents: "none",
+        }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, lineHeight: 1, fontFamily: fontH }}>
+            {Math.round(score)}
+            <span style={{ fontSize: 13, fontWeight: 400, color: C.muted }}>/100</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Quality score</div>
+          {rationale && (
+            <div style={{
+              fontSize: 12, color: C.muted, lineHeight: 1.5,
+              borderTop: `1px solid ${C.border}`, paddingTop: 6,
+            }}>
+              {rationale}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── PROJECT DETAIL PAGE ──────────────────────────────────────────────────────
 function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const isMobile = useIsMobile();
-  const [project,        setProject]        = useState(initProject);
-  const [candidates,     setCandidates]     = useState([]);
-  const [total,          setTotal]          = useState(0);
-  const [matching,       setMatching]       = useState(false);
-  const [matchMsg,       setMatchMsg]       = useState("");
-  const [copiedLink,     setCopied]         = useState(false);
-  const [poolTab,        setPoolTab]        = useState('matched');
-  const [showReport,     setShowReport]     = useState(false);
-  const [showMatchPanel, setShowMatchPanel] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
-  const [matchWeights,   setMatchWeights]   = useState({ ...DEFAULT_PROJECT_WEIGHTS });
-  const [selectedPreset, setSelectedPreset] = useState("ngo");
-  const [removeConfirm,  setRemoveConfirm]  = useState(null); // candidate obj pending removal
+  const [project,          setProject]          = useState(initProject);
+  const [candidates,       setCandidates]       = useState([]);
+  const [total,            setTotal]            = useState(0);
+  const [matching,         setMatching]         = useState(false);
+  const [matchMsg,         setMatchMsg]         = useState("");
+  const [copiedLink,       setCopied]           = useState(false);
+  const [poolTab,          setPoolTab]          = useState('matched');
+  const [showReport,       setShowReport]       = useState(false);
+  const [showMatchPanel,   setShowMatchPanel]   = useState(false);
+  const [showBulkUpload,   setShowBulkUpload]   = useState(false);
+  const [matchWeights,     setMatchWeights]     = useState({ ...DEFAULT_PROJECT_WEIGHTS });
+  const [selectedPreset,   setSelectedPreset]   = useState("ngo");
+  const [removeConfirm,    setRemoveConfirm]    = useState(null);
+  const [qualityRunning,   setQualityRunning]   = useState(false);
+  const [qualityMsg,       setQualityMsg]       = useState("");
+  const [qualityFilter,    setQualityFilter]    = useState("all");
+  const [selectedIds,      setSelectedIds]      = useState(new Set());
+  const [bulkRemoveConfirm, setBulkRemoveConfirm] = useState(false);
+  const [bulkRemoving,     setBulkRemoving]     = useState(false);
 
   const applyUrl = `${window.location.origin}/apply/${project.apply_slug}`;
 
@@ -4110,16 +4173,18 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
 
   useEffect(() => { fetchCandidates(); }, [project.id]);
 
+  // Clear selection when switching tabs
+  const switchTab = (tab) => {
+    setPoolTab(tab);
+    setQualityFilter("all");
+    setSelectedIds(new Set());
+  };
+
   const applyPreset = (presetKey) => {
     setSelectedPreset(presetKey);
     const p = PROJECT_PRESETS[presetKey];
     if (p) {
-      setMatchWeights({
-        skill: p.skill,
-        vector: p.vector,
-        experience: p.experience,
-        domain: p.domain
-      });
+      setMatchWeights({ skill: p.skill, vector: p.vector, experience: p.experience, domain: p.domain });
     }
   };
 
@@ -4133,7 +4198,6 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         setMatching(false);
         return;
       }
-
       const r = await apiFetch(`/api/v1/projects/${project.id}/match`, {
         method: "POST",
         body: JSON.stringify({
@@ -4144,18 +4208,37 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         }),
       });
       const d = await r.json();
-
       if (!r.ok) {
         setMatchMsg(d.detail || "Match failed.");
       } else {
         setMatchMsg(`✓ ${d.candidates_matched} candidates matched`);
         setShowMatchPanel(false);
+        setSelectedIds(new Set());
         fetchCandidates();
       }
     } catch {
       setMatchMsg("Network error.");
     } finally {
       setMatching(false);
+    }
+  };
+
+  const runQualityScore = async () => {
+    setQualityRunning(true);
+    setQualityMsg("");
+    try {
+      const r = await apiFetch(`/api/v1/projects/${project.id}/quality-score`, { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        setQualityMsg(d.detail || "Quality check failed.");
+      } else {
+        setQualityMsg(`✓ ${d.scored} candidates scored`);
+        fetchCandidates();
+      }
+    } catch {
+      setQualityMsg("Network error.");
+    } finally {
+      setQualityRunning(false);
     }
   };
 
@@ -4199,6 +4282,47 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     fetchCandidates();
   };
 
+  // ── Selection helpers ──────────────────────────────────────────────────────
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const activeIds = displayCandidates.filter(c => c.is_active).map(c => c.candidate_id);
+    const allSelected = activeIds.every(id => selectedIds.has(id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(activeIds));
+    }
+  };
+
+  // ── Bulk remove ────────────────────────────────────────────────────────────
+  const confirmBulkRemove = () => setBulkRemoveConfirm(true);
+
+  const executeBulkRemove = async () => {
+    setBulkRemoving(true);
+    try {
+      for (const candidateId of selectedIds) {
+        await apiFetch(`/api/v1/projects/${project.id}/candidates/${candidateId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ action: "remove" }),
+        });
+      }
+      setSelectedIds(new Set());
+      setBulkRemoveConfirm(false);
+      fetchCandidates();
+    } catch {
+      setBulkRemoveConfirm(false);
+    } finally {
+      setBulkRemoving(false);
+    }
+  };
+
   const scoreColor = s => !s ? C.muted : s >= 0.7 ? C.success : s >= 0.5 ? C.warning : C.error;
   const scoreBg    = s => !s ? C.surface : s >= 0.7 ? C.successLight : s >= 0.5 ? C.warningLight : C.errorLight;
   const srcBadge = src =>
@@ -4210,10 +4334,24 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const matchedCandidates     = candidates.filter(c => c.source !== 'apply_link');
   const appliedCandidates     = candidates.filter(c => c.source === 'apply_link');
   const shortlistedCandidates = candidates.filter(c => c.source === 'apply_link_add' && c.is_active);
-  const displayCandidates     = poolTab === 'matched' ? matchedCandidates : appliedCandidates;
   const reportAvailable       = matchedCandidates.filter(c => c.is_active).length > 0;
+  const weightsChanged        = JSON.stringify(matchWeights) !== JSON.stringify(DEFAULT_PROJECT_WEIGHTS);
 
-  const weightsChanged = JSON.stringify(matchWeights) !== JSON.stringify(DEFAULT_PROJECT_WEIGHTS);
+  const tabCandidates = poolTab === 'matched' ? matchedCandidates : appliedCandidates;
+  const displayCandidates = qualityFilter === "all"
+    ? tabCandidates
+    : qualityFilter === "unscored"
+      ? tabCandidates.filter(c => !c.quality_label)
+      : tabCandidates.filter(c => c.quality_label === {
+          strong:   "Strong fit",
+          probable: "Probable fit",
+          weak:     "Weak fit",
+        }[qualityFilter]);
+
+  const anyScored      = candidates.some(c => c.quality_label != null);
+  const activeDisplayIds = displayCandidates.filter(c => c.is_active).map(c => c.candidate_id);
+  const allSelected    = activeDisplayIds.length > 0 && activeDisplayIds.every(id => selectedIds.has(id));
+  const someSelected   = selectedIds.size > 0;
 
   return (
     <div>
@@ -4229,7 +4367,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             {project.last_matched_at && ` · Last matched ${fmtDate(project.last_matched_at)}`}
           </div>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {reportAvailable && !project.is_archived && (
             <button style={S.btn("outline", true)} onClick={() => setShowReport(true)}>
               <Icon n="summarize" size={13} />Generate Report
@@ -4240,10 +4378,19 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
               <Icon n="upload_file" size={13} />Upload CVs
             </button>
           )}
+          {!project.is_archived && (
+            <button
+              style={{ ...S.btn("outline", true), opacity: qualityRunning ? 0.6 : 1 }}
+              onClick={runQualityScore}
+              disabled={qualityRunning}
+            >
+              <Icon n="verified" size={13} />{qualityRunning ? "Scoring…" : "Quality Check"}
+            </button>
+          )}
           <button
             style={{
               ...S.btn(project.is_archived ? "outline" : "primary", true),
-              opacity: project.is_archived ? 0.5 : 1
+              opacity: project.is_archived ? 0.5 : 1,
             }}
             onClick={() => { if (!project.is_archived) setShowMatchPanel(p => !p); }}
             disabled={project.is_archived}
@@ -4260,14 +4407,10 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             <div style={{ fontSize: "13px", fontWeight: "700", fontFamily: fontH, color: C.text, display: "flex", alignItems: "center", gap: "7px" }}>
               <Icon n="hub" size={15} color={C.primary} />Match Settings
             </div>
-            <button
-              onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
-            >
+            <button onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
               <Icon n="close" size={18} />
             </button>
           </div>
-
           <div style={{ marginBottom: "4px" }}>
             <label style={S.label}>Scoring Profile</label>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px" }}>
@@ -4276,16 +4419,12 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                   key={key}
                   onClick={() => applyPreset(key)}
                   style={{
-                    padding: "5px 14px",
-                    borderRadius: "20px",
-                    fontSize: "12px",
-                    fontWeight: "600",
+                    padding: "5px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "600",
                     cursor: "pointer",
                     border: `1px solid ${selectedPreset === key ? C.primary : C.border}`,
                     backgroundColor: selectedPreset === key ? C.primaryDim : "transparent",
                     color: selectedPreset === key ? C.primary : C.muted,
-                    transition: "all 0.15s",
-                    fontFamily: fontB
+                    transition: "all 0.15s", fontFamily: fontB,
                   }}
                 >
                   {preset.label}
@@ -4293,33 +4432,15 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
               ))}
             </div>
           </div>
-
           <ProjectWeightSliders weights={matchWeights} onChange={setMatchWeights} />
-
           <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${C.border}` }}>
-            <button
-              style={{ ...S.btn("primary"), opacity: matching ? 0.6 : 1 }}
-              onClick={runMatch}
-              disabled={matching}
-            >
+            <button style={{ ...S.btn("primary"), opacity: matching ? 0.6 : 1 }} onClick={runMatch} disabled={matching}>
               <Icon n="hub" size={14} />{matching ? "Matching…" : weightsChanged ? "Run Match ✦" : "Run Match"}
             </button>
-            <button style={S.btn("outline")} onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}>
-              Cancel
-            </button>
+            <button style={S.btn("outline")} onClick={() => { setShowMatchPanel(false); setMatchMsg(""); }}>Cancel</button>
             {matchMsg && (
-              <span style={{
-                fontSize: "13px",
-                color: matchMsg.startsWith("✓") ? C.success : C.error,
-                display: "flex",
-                alignItems: "center",
-                gap: "5px"
-              }}>
-                <Icon
-                  n={matchMsg.startsWith("✓") ? "check_circle" : "error"}
-                  size={14}
-                  color={matchMsg.startsWith("✓") ? C.success : C.error}
-                />
+              <span style={{ fontSize: "13px", color: matchMsg.startsWith("✓") ? C.success : C.error, display: "flex", alignItems: "center", gap: "5px" }}>
+                <Icon n={matchMsg.startsWith("✓") ? "check_circle" : "error"} size={14} color={matchMsg.startsWith("✓") ? C.success : C.error} />
                 {matchMsg}
               </span>
             )}
@@ -4332,13 +4453,24 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         <div style={{
           background: matchMsg.startsWith("✓") ? C.successLight : C.errorLight,
           border: `1px solid ${matchMsg.startsWith("✓") ? "rgba(59,178,115,0.25)" : "rgba(224,92,92,0.25)"}`,
-          borderRadius: "8px",
-          padding: "10px 16px",
-          marginBottom: "16px",
-          fontSize: "13px",
-          color: matchMsg.startsWith("✓") ? "#2a7a50" : C.error
+          borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
+          fontSize: "13px", color: matchMsg.startsWith("✓") ? "#2a7a50" : C.error,
         }}>
           {matchMsg}
+        </div>
+      )}
+
+      {/* ── Quality check result message ── */}
+      {qualityMsg && (
+        <div style={{
+          background: qualityMsg.startsWith("✓") ? C.successLight : C.errorLight,
+          border: `1px solid ${qualityMsg.startsWith("✓") ? "rgba(59,178,115,0.25)" : "rgba(224,92,92,0.25)"}`,
+          borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
+          fontSize: "13px", color: qualityMsg.startsWith("✓") ? "#2a7a50" : C.error,
+          display: "flex", alignItems: "center", gap: "6px",
+        }}>
+          <Icon n={qualityMsg.startsWith("✓") ? "verified" : "error"} size={14} color={qualityMsg.startsWith("✓") ? C.success : C.error} />
+          {qualityMsg}
         </div>
       )}
 
@@ -4346,25 +4478,12 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       <div style={{ ...S.card, display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", marginBottom: "20px" }}>
         <div style={{ flex: 1, minWidth: "200px" }}>
           <div style={S.label}>Apply Link</div>
-          <div style={{
-            fontSize: "12px",
-            color: project.apply_enabled ? C.primary : C.muted,
-            fontFamily: font,
-            wordBreak: "break-all"
-          }}>
+          <div style={{ fontSize: "12px", color: project.apply_enabled ? C.primary : C.muted, fontFamily: font, wordBreak: "break-all" }}>
             {applyUrl}
           </div>
         </div>
-        <button
-          style={S.btn("outline", true)}
-          onClick={() => {
-            navigator.clipboard.writeText(applyUrl);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-        >
-          <Icon n={copiedLink ? "check" : "content_copy"} size={13} />
-          {copiedLink ? "Copied!" : "Copy"}
+        <button style={S.btn("outline", true)} onClick={() => { navigator.clipboard.writeText(applyUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+          <Icon n={copiedLink ? "check" : "content_copy"} size={13} />{copiedLink ? "Copied!" : "Copy"}
         </button>
         <button style={S.btn(project.apply_enabled ? "danger" : "success", true)} onClick={toggleApplyLink}>
           <Icon n={project.apply_enabled ? "link_off" : "link"} size={13} />
@@ -4378,48 +4497,88 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       </div>
 
       {/* ── Tab toggle ── */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
         <button
-          style={{
-            padding: '6px 16px',
-            borderRadius: '20px',
-            fontSize: '13px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            border: 'none',
-            backgroundColor: poolTab === 'matched' ? C.primary : C.surface,
-            color: poolTab === 'matched' ? '#fff' : C.muted
-          }}
-          onClick={() => setPoolTab('matched')}
+          style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "matched" ? C.primary : C.surface, color: poolTab === "matched" ? "#fff" : C.muted }}
+          onClick={() => switchTab("matched")}
         >
-          <Icon n='auto_awesome' size={13} />{` Matched (${matchedCandidates.length})`}
+          <Icon n="auto_awesome" size={13} />{` Matched (${matchedCandidates.length})`}
         </button>
         <button
-          style={{
-            padding: '6px 16px',
-            borderRadius: '20px',
-            fontSize: '13px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            border: 'none',
-            backgroundColor: poolTab === 'applied' ? C.success : C.surface,
-            color: poolTab === 'applied' ? '#fff' : C.muted
-          }}
-          onClick={() => setPoolTab('applied')}
+          style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "applied" ? C.success : C.surface, color: poolTab === "applied" ? "#fff" : C.muted }}
+          onClick={() => switchTab("applied")}
         >
-          <Icon n='inbox' size={13} />{` Applied (${appliedCandidates.length})`}
+          <Icon n="inbox" size={13} />{` Applied (${appliedCandidates.length})`}
         </button>
       </div>
+
+      {/* ── Quality filter pills ── */}
+      {anyScored && (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "11px", color: C.muted, fontFamily: fontB, fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em" }}>Quality</span>
+          {[
+            { key: "all",      label: "All" },
+            { key: "strong",   label: "Strong fit",   color: "#3B6D11", border: "#97C459" },
+            { key: "probable", label: "Probable fit", color: "#854F0B", border: "#EF9F27" },
+            { key: "weak",     label: "Weak fit",     color: "#A32D2D", border: "#F09595" },
+            { key: "unscored", label: "Not scored",   color: C.muted,   border: C.border  },
+          ].map(f => (
+            <button
+              key={f.key}
+              onClick={() => { setQualityFilter(f.key); setSelectedIds(new Set()); }}
+              style={{
+                padding: "4px 12px", borderRadius: 999, fontSize: 12, fontFamily: fontB,
+                border: `1px solid ${qualityFilter === f.key ? (f.border || C.borderMid) : C.border}`,
+                background: qualityFilter === f.key ? `${(f.color || C.muted)}18` : "transparent",
+                color: qualityFilter === f.key ? (f.color || C.muted) : C.muted,
+                cursor: "pointer", fontWeight: qualityFilter === f.key ? 700 : 400,
+                transition: "all 0.15s",
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+          <span style={{ fontSize: "11px", color: C.muted, fontFamily: fontB }}>{displayCandidates.length} shown</span>
+        </div>
+      )}
+
+      {/* ── Bulk action bar (desktop + matched tab only) ── */}
+      {!isMobile && poolTab === "matched" && someSelected && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: "12px",
+          padding: "10px 16px", marginBottom: "12px",
+          backgroundColor: C.errorLight,
+          border: `1px solid rgba(224,92,92,0.25)`,
+          borderRadius: "10px",
+        }}>
+          <span style={{ fontSize: "13px", color: C.error, fontWeight: "600", fontFamily: fontB }}>
+            {selectedIds.size} candidate{selectedIds.size > 1 ? "s" : ""} selected
+          </span>
+          <button
+            style={{ ...S.btn("danger", true) }}
+            onClick={confirmBulkRemove}
+          >
+            <Icon n="person_remove" size={13} />Remove Selected
+          </button>
+          <button
+            style={{ ...S.btn("outline", true), fontSize: "12px" }}
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* ── Candidate list ── */}
       {displayCandidates.length === 0 ? (
         <div style={{ textAlign: "center", padding: "48px 0", color: C.muted }}>
           <Icon n="people" size={40} color={C.border} style={{ display: "block", margin: "0 auto 12px" }} />
-          {poolTab === 'matched'
+          {poolTab === "matched"
             ? "No matched candidates yet. Click Run Match to build the pool."
             : "No applied candidates yet. Share the apply link or upload CVs directly."}
         </div>
       ) : isMobile ? (
+        /* ── Mobile cards ── */
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           {displayCandidates.map(c => {
             const badge = srcBadge(c.source);
@@ -4433,31 +4592,23 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                       {[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}
                     </div>
                   </div>
-                  {score != null && (
-                    <span style={{
-                      background: scoreBg(score),
-                      color: scoreColor(score),
-                      padding: "3px 10px",
-                      borderRadius: "20px",
-                      fontSize: "13px",
-                      fontWeight: "700"
-                    }}>
-                      {Math.round(score * 100)}%
-                    </span>
-                  )}
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
+                    {score != null && (
+                      <span style={{ background: scoreBg(score), color: scoreColor(score), padding: "3px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "700" }}>
+                        {Math.round(score * 100)}%
+                      </span>
+                    )}
+                    {c.quality_label && (
+                      <QualityBadge label={c.quality_label} score={c.quality_score} rationale={c.quality_rationale} />
+                    )}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", alignItems: "center" }}>
                   <span style={S.badge(badge.type)}>{badge.label}</span>
-                  <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}>
-                    <Icon n="person" size={12} />View
-                  </button>
-                  <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}>
-                    <Icon n="hub" size={12} />Similar
-                  </button>
-                  {poolTab === 'applied' && (
-                    <button style={{ ...S.btn('outline', true), fontSize: '11px' }} onClick={() => handleAddCandidate(c.candidate_id)}>
-                      <Icon n='add' size={12} /> Add to Matched
-                    </button>
+                  <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
+                  <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
+                  {poolTab === "applied" && (
+                    <button style={{ ...S.btn("outline", true), fontSize: "11px" }} onClick={() => handleAddCandidate(c.candidate_id)}><Icon n="add" size={12} /> Add to Matched</button>
                   )}
                   {c.is_active
                     ? <button style={S.btn("danger", true)} onClick={() => setRemoveConfirm(c)}>Remove</button>
@@ -4468,74 +4619,114 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
           })}
         </div>
       ) : (
+        /* ── Desktop table ── */
         <div style={{ backgroundColor: C.white, borderRadius: "14px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
           <table style={S.table}>
             <thead>
-              <tr>{["Match", "Name", "Designation", "Exp", "Location", "Score Breakdown", "Source", "Actions"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr>
+              <tr>
+                {poolTab === "matched" && (
+                  <th style={{ ...S.th, width: "36px", textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      style={{ cursor: "pointer", accentColor: C.primary }}
+                      title="Select all"
+                    />
+                  </th>
+                )}
+                {["Match", "Name", "Designation", "Exp", "Location", "Score Breakdown", "Quality", "Source", "Actions"].map(h => (
+                  <th key={h} style={S.th}>{h}</th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {displayCandidates.map(c => {
                 const badge = srcBadge(c.source);
+                const isSelected = selectedIds.has(c.candidate_id);
                 return (
                   <tr
                     key={c.candidate_id}
-                    style={{ opacity: c.is_active ? 1 : 0.4 }}
-                    onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
-                    onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}
+                    style={{ opacity: c.is_active ? 1 : 0.4, backgroundColor: isSelected ? C.primaryDim : "" }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = C.surface; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = isSelected ? C.primaryDim : ""; }}
                   >
+                    {/* Checkbox — matched tab only */}
+                    {poolTab === "matched" && (
+                      <td style={{ ...S.td, width: "36px", textAlign: "center" }}>
+                        {c.is_active && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(c.candidate_id)}
+                            style={{ cursor: "pointer", accentColor: C.primary }}
+                          />
+                        )}
+                      </td>
+                    )}
+
+                    {/* Match % */}
                     <td style={{ ...S.td, width: "60px", textAlign: "center" }}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
-                          <div style={{
-                            fontSize: "17px",
-                            fontWeight: "800",
-                            fontFamily: fontH,
-                            color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error
-                          }}>
+                          <div style={{ fontSize: "17px", fontWeight: "800", fontFamily: fontH, color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error }}>
                             {Math.round(c.match_score * 100)}
                           </div>
                           <div style={{ fontSize: "9px", color: C.muted, fontWeight: "700", textTransform: "uppercase" }}>match</div>
                         </div>
                       ) : <span style={{ fontSize: "13px", color: C.muted }}>—</span>}
                     </td>
+
+                    {/* Name */}
                     <td style={{ ...S.td, maxWidth: "180px" }}>
                       <div style={{ fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || "—"}</div>
                       <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_company || "—"}</div>
                     </td>
+
+                    {/* Designation */}
                     <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {c.current_designation || "—"}
                     </td>
+
+                    {/* Exp */}
                     <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
                       {c.total_experience != null ? `${c.total_experience}y` : "—"}
                     </td>
+
+                    {/* Location */}
                     <td style={{ ...S.td, color: C.muted, fontSize: "12px", maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.location || ""}>
                       {c.location || "—"}
                     </td>
+
+                    {/* Score breakdown */}
                     <td style={S.td}>
                       {c.match_score != null ? (
                         <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
                           <ScorePill label="Skill" value={c.skill_score ?? 0} color={C.success} />
-                          <ScorePill label="Sem" value={c.vector_score ?? 0} color={C.primary} />
-                          <ScorePill label="Exp" value={c.experience_score ?? 0} color={C.similar} />
-                          {c.domain_score != null && (
-                            <ScorePill label="Dom" value={c.domain_score} color={C.info} />
-                          )}
+                          <ScorePill label="Sem"   value={c.vector_score ?? 0} color={C.primary} />
+                          <ScorePill label="Exp"   value={c.experience_score ?? 0} color={C.similar} />
+                          {c.domain_score != null && <ScorePill label="Dom" value={c.domain_score} color={C.info} />}
                         </div>
                       ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
                     </td>
+
+                    {/* Quality */}
+                    <td style={{ ...S.td, textAlign: "center" }}>
+                      {c.quality_label
+                        ? <QualityBadge label={c.quality_label} score={c.quality_score} rationale={c.quality_rationale} />
+                        : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
+                    </td>
+
+                    {/* Source */}
                     <td style={S.td}><span style={S.badge(badge.type)}>{badge.label}</span></td>
+
+                    {/* Actions */}
                     <td style={{ ...S.td, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                        <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}>
-                          <Icon n="person" size={12} />View
-                        </button>
-                        <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}>
-                          <Icon n="hub" size={12} />Similar
-                        </button>
-                        {poolTab === 'applied' && (
-                          <button style={{ ...S.btn('outline', true), fontSize: '11px' }} onClick={() => handleAddCandidate(c.candidate_id)}>
-                            <Icon n='add' size={12} /> Add to Matched
-                          </button>
+                        <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
+                        <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
+                        {poolTab === "applied" && (
+                          <button style={{ ...S.btn("outline", true), fontSize: "11px" }} onClick={() => handleAddCandidate(c.candidate_id)}><Icon n="add" size={12} /> Add to Matched</button>
                         )}
                         {c.is_active
                           ? <button style={S.btn("danger", true)} onClick={() => setRemoveConfirm(c)}>Remove</button>
@@ -4570,31 +4761,18 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
         />
       )}
 
-      {/* ── Remove Candidate Confirmation Modal ── */}
+      {/* ── Single remove confirmation modal ── */}
       {removeConfirm && (
         <div style={S.modal} onClick={() => setRemoveConfirm(null)}>
           <div style={{ ...S.modalWrap, maxWidth: "420px" }} onClick={e => e.stopPropagation()}>
             <div style={S.modalHead}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <div style={{
-                  width: "30px",
-                  height: "30px",
-                  borderRadius: "8px",
-                  backgroundColor: C.errorLight,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}>
+                <div style={{ width: "30px", height: "30px", borderRadius: "8px", backgroundColor: C.errorLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Icon n="person_remove" size={15} color={C.error} />
                 </div>
-                <span style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>
-                  Remove Candidate
-                </span>
+                <span style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>Remove Candidate</span>
               </div>
-              <button
-                onClick={() => setRemoveConfirm(null)}
-                style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
-              >
+              <button onClick={() => setRemoveConfirm(null)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
                 <Icon n="close" size={20} />
               </button>
             </div>
@@ -4605,37 +4783,53 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
               <div style={{ fontSize: "12px", color: C.muted, marginBottom: "16px" }}>
                 {[removeConfirm.current_designation, removeConfirm.current_company].filter(Boolean).join(" · ")}
               </div>
-              <div style={{
-                backgroundColor: C.warningLight,
-                border: `1px solid rgba(217,119,6,0.25)`,
-                borderRadius: "10px",
-                padding: "12px 14px",
-                fontSize: "13px",
-                color: C.warning,
-                lineHeight: "1.6",
-                display: "flex",
-                gap: "8px",
-                alignItems: "flex-start",
-              }}>
+              <div style={{ backgroundColor: C.warningLight, border: `1px solid rgba(217,119,6,0.25)`, borderRadius: "10px", padding: "12px 14px", fontSize: "13px", color: C.warning, lineHeight: "1.6", display: "flex", gap: "8px", alignItems: "flex-start" }}>
                 <Icon n="warning" size={15} color={C.warning} style={{ flexShrink: 0, marginTop: "2px" }} />
                 <span>
-                  Removing this candidate will keep them out of this project,
-                  even after re-running match.{" "}
-                  <strong>This only affects this project</strong> — they remain
-                  in the candidate database and can still match on other projects.
+                  This candidate will be permanently removed from this project.{" "}
+                  <strong>This only affects this project</strong> — they remain in the candidate database and can still match on other projects.
                 </span>
               </div>
             </div>
             <div style={S.modalFoot}>
-              <button
-                style={S.btn("danger")}
-                onClick={() => removeCand(removeConfirm.candidate_id)}
-              >
+              <button style={S.btn("danger")} onClick={() => removeCand(removeConfirm.candidate_id)}>
                 <Icon n="person_remove" size={14} />Confirm Remove
               </button>
-              <button style={S.btn("outline")} onClick={() => setRemoveConfirm(null)}>
-                Cancel
+              <button style={S.btn("outline")} onClick={() => setRemoveConfirm(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk remove confirmation modal ── */}
+      {bulkRemoveConfirm && (
+        <div style={S.modal} onClick={() => setBulkRemoveConfirm(false)}>
+          <div style={{ ...S.modalWrap, maxWidth: "420px" }} onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "30px", height: "30px", borderRadius: "8px", backgroundColor: C.errorLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon n="group_remove" size={15} color={C.error} />
+                </div>
+                <span style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>Remove {selectedIds.size} Candidate{selectedIds.size > 1 ? "s" : ""}</span>
+              </div>
+              <button onClick={() => setBulkRemoveConfirm(false)} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
+                <Icon n="close" size={20} />
               </button>
+            </div>
+            <div style={S.modalBody}>
+              <div style={{ backgroundColor: C.errorLight, border: `1px solid rgba(224,92,92,0.25)`, borderRadius: "10px", padding: "12px 14px", fontSize: "13px", color: C.error, lineHeight: "1.6", display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                <Icon n="warning" size={15} color={C.error} style={{ flexShrink: 0, marginTop: "2px" }} />
+                <span>
+                  <strong>{selectedIds.size} candidate{selectedIds.size > 1 ? "s" : ""}</strong> will be permanently removed from this project.
+                  They remain in the candidate database and can still match on other projects.
+                </span>
+              </div>
+            </div>
+            <div style={S.modalFoot}>
+              <button style={{ ...S.btn("danger"), opacity: bulkRemoving ? 0.6 : 1 }} onClick={executeBulkRemove} disabled={bulkRemoving}>
+                <Icon n="group_remove" size={14} />{bulkRemoving ? "Removing…" : `Remove ${selectedIds.size}`}
+              </button>
+              <button style={S.btn("outline")} onClick={() => setBulkRemoveConfirm(false)} disabled={bulkRemoving}>Cancel</button>
             </div>
           </div>
         </div>
