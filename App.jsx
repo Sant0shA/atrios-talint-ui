@@ -4152,7 +4152,8 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const [selectedPreset,   setSelectedPreset]   = useState("ngo");
   const [removeConfirm,    setRemoveConfirm]    = useState(null);
   const [qualityRunning,   setQualityRunning]   = useState(false);
-  const [qualityMsg,       setQualityMsg]       = useState("");
+  const [qualityMsg,                       setQualityMsg]                    =  useState("");
+  const [qualityAppliedMsg,    setQualityAppliedMsg]    = useState("");
   const [qualityFilter,    setQualityFilter]    = useState("all");
   const [selectedIds,      setSelectedIds]      = useState(new Set());
   const [bulkRemoveConfirm, setBulkRemoveConfirm] = useState(false);
@@ -4178,6 +4179,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     setPoolTab(tab);
     setQualityFilter("all");
     setSelectedIds(new Set());
+    setQualityAppliedMsg("");
   };
 
   const applyPreset = (presetKey) => {
@@ -4223,24 +4225,35 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     }
   };
 
-  const runQualityScore = async () => {
+ const runQualityScore = async (scope = "all") => {
+    const isApplied = scope === "applied";
+    if (isApplied) {
+    setQualityAppliedMsg("");
+    } else {
     setQualityRunning(true);
     setQualityMsg("");
-    try {
-      const r = await apiFetch(`/api/v1/projects/${project.id}/quality-score`, { method: "POST" });
-      const d = await r.json();
-      if (!r.ok) {
-        setQualityMsg(d.detail || "Quality check failed.");
-      } else {
-        setQualityMsg(`✓ ${d.scored} candidates scored`);
-        fetchCandidates();
-      }
-    } catch {
-      setQualityMsg("Network error.");
-    } finally {
-      setQualityRunning(false);
+   }
+  try {
+    const r = await apiFetch(
+      `/api/v1/projects/${project.id}/quality-score?scope=${scope}`,
+      { method: "POST" }
+    );
+    const d = await r.json();
+    if (!r.ok) {
+      const msg = d.detail || "Quality check failed.";
+      isApplied ? setQualityAppliedMsg(msg) : setQualityMsg(msg);
+    } else {
+      const msg = `✓ ${d.scored} scored`;
+      isApplied ? setQualityAppliedMsg(msg) : setQualityMsg(`✓ ${d.scored} candidates scored`);
+      fetchCandidates();
     }
-  };
+  } catch {
+    const msg = "Network error.";
+    isApplied ? setQualityAppliedMsg(msg) : setQualityMsg(msg);
+  } finally {
+    if (!isApplied) setQualityRunning(false);
+  }
+};
 
   const toggleApplyLink = async () => {
     const r = await apiFetch(`/api/v1/projects/${project.id}`, {
@@ -4497,20 +4510,55 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
       </div>
 
       {/* ── Tab toggle ── */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-        <button
-          style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "matched" ? C.primary : C.surface, color: poolTab === "matched" ? "#fff" : C.muted }}
-          onClick={() => switchTab("matched")}
-        >
-          <Icon n="auto_awesome" size={13} />{` Matched (${matchedCandidates.length})`}
-        </button>
-        <button
-          style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "applied" ? C.success : C.surface, color: poolTab === "applied" ? "#fff" : C.muted }}
-          onClick={() => switchTab("applied")}
-        >
-          <Icon n="inbox" size={13} />{` Applied (${appliedCandidates.length})`}
-        </button>
-      </div>
+<div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center", flexWrap: "wrap" }}>
+  <button
+    style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "matched" ? C.primary : C.surface, color: poolTab === "matched" ? "#fff" : C.muted }}
+    onClick={() => switchTab("matched")}
+  >
+    <Icon n="auto_awesome" size={13} />{` Matched (${matchedCandidates.length})`}
+  </button>
+  <button
+    style={{ padding: "6px 16px", borderRadius: "20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", border: "none", backgroundColor: poolTab === "applied" ? C.success : C.surface, color: poolTab === "applied" ? "#fff" : C.muted }}
+    onClick={() => switchTab("applied")}
+  >
+    <Icon n="inbox" size={13} />{` Applied (${appliedCandidates.length})`}
+  </button>
+
+  {poolTab === "applied" && appliedCandidates.length > 0 && !project.is_archived && (
+    <>
+      <div style={{ width: "1px", height: "24px", backgroundColor: C.border, margin: "0 4px" }} />
+      <button
+        style={{
+          ...S.btn("outline", true),
+          fontSize: "12px",
+          color: C.success,
+          borderColor: "rgba(59,178,115,0.4)",
+          opacity: qualityRunning ? 0.5 : 1,
+        }}
+        onClick={() => runQualityScore("applied")}
+        disabled={qualityRunning}
+        title="Score only inbound applicants — saves GPT cost vs scoring full pool"
+      >
+        <Icon n="verified" size={13} color={C.success} />
+        Score Applied
+      </button>
+      {qualityAppliedMsg && (
+        <span style={{
+          fontSize: "12px",
+          color: qualityAppliedMsg.startsWith("✓") ? C.success : C.error,
+          display: "flex", alignItems: "center", gap: "4px",
+        }}>
+          <Icon
+            n={qualityAppliedMsg.startsWith("✓") ? "check_circle" : "error"}
+            size={13}
+            color={qualityAppliedMsg.startsWith("✓") ? C.success : C.error}
+          />
+          {qualityAppliedMsg}
+        </span>
+      )}
+    </>
+  )}
+</div>
 
       {/* ── Quality filter pills ── */}
       {anyScored && (
@@ -5445,6 +5493,7 @@ export default function App() {
   const [tab, setTab] = useState("search");
   const [showChangePw, setShowChangePw] = useState(false);
   const [modalCand, setModalCand] = useState(null);
+  const [projectsKey, setProjectsKey] = useState(0);  // ← increments on Projects tab click → resets to list view
   const isMobile = useIsMobile();
 
   // Handle similar window rendering via hash
@@ -5457,7 +5506,7 @@ export default function App() {
     if (token) localStorage.setItem("ti_token", token);
     if (seedId) return <SimilarPanel seedId={parseInt(seedId)} seedName={seedName || "Unknown"} />;
   }
- if (hash.startsWith("#report?")) {
+  if (hash.startsWith("#report?")) {
     return <ReportPrintView />;
   }
 
@@ -5480,6 +5529,12 @@ export default function App() {
   ];
   const initials = user.username.slice(0, 2).toUpperCase();
 
+  // Nav click handler — resets ProjectsTab to list view on every Projects click
+  const handleTabClick = (key) => {
+    if (key === "projects") setProjectsKey(k => k + 1);
+    setTab(key);
+  };
+
   return (
     <div style={S.app}>
       <header style={{ ...S.header, display: isMobile ? "none" : "flex" }}>
@@ -5489,7 +5544,7 @@ export default function App() {
         </div>
         <nav style={S.nav}>
           {tabs.map(({ key, icon, label }) => (
-            <button key={key} style={S.navBtn(tab === key)} onClick={() => setTab(key)}>
+            <button key={key} style={S.navBtn(tab === key)} onClick={() => handleTabClick(key)}>
               <Icon n={icon} size={14} />{label}
             </button>
           ))}
@@ -5522,17 +5577,17 @@ export default function App() {
       )}
 
       <main style={isMobile ? S.mainMobile : S.main}>
-        {tab === "search" && <SearchTab />}
-        {tab === "upload" && <UploadTab />}
-        {tab === "projects" && <ProjectsTab onViewCandidate={setModalCand} />}
+        {tab === "search"    && <SearchTab />}
+        {tab === "upload"    && <UploadTab />}
+        {tab === "projects"  && <ProjectsTab key={projectsKey} onViewCandidate={setModalCand} />}
         {tab === "resources" && <ResourcesTab isAdmin={user.role === "admin"} />}
-        {tab === "admin" && user.role === "admin" && <AdminTab />}
+        {tab === "admin"     && user.role === "admin" && <AdminTab />}
       </main>
 
       {isMobile && (
         <nav style={S.mobileNav} className="mobile-nav">
           {tabs.map(({ key, icon, label }) => (
-            <button key={key} style={S.mobileNavBtn(tab === key)} onClick={() => setTab(key)}>
+            <button key={key} style={S.mobileNavBtn(tab === key)} onClick={() => handleTabClick(key)}>
               <Icon n={icon} size={tab === key ? 22 : 20} color={tab === key ? C.primary : C.muted} />
               <span style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
             </button>
