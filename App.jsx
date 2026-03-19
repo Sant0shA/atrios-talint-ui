@@ -373,8 +373,8 @@ function LoginPage({ onLogin }) {
       const res = await fetch(`${API}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       if (!res.ok) { setError("Invalid username or password"); return; }
       const data = await res.json();
-      setAuth(data.access_token, { username: data.username, role: data.role });
-      onLogin({ username: data.username, role: data.role });
+      setAuth(data.access_token, { username: data.username, role: data.role, client_id: data.client_id ?? null });
+      onLogin({ username: data.username, role: data.role, client_id: data.client_id ?? null });
     } catch { setError("Connection failed."); } finally { setLoading(false); }
   };
   return (
@@ -1877,21 +1877,438 @@ function LocationPieChart({ data, skill, total, onClose }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// A. CLIENTS ADMIN SECTION
+// ══════════════════════════════════════════════════════════════════════════════
+ 
+function ClientsAdminSection() {
+  const isMobile = useIsMobile();
+  const [clients,       setClients]       = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [showCreate,    setShowCreate]    = useState(false);
+  const [showCreds,     setShowCreds]     = useState(null);   // { username, password }
+  const [creating,      setCreating]      = useState(false);
+  const [actionMsg,     setActionMsg]     = useState("");
+  const [form, setForm] = useState({
+    name: "", contact_name: "", contact_email: "", access_until: ""
+  });
+  const [formErr, setFormErr] = useState("");
+ 
+  // Activate/extend modal state
+  const [activateTarget, setActivateTarget] = useState(null);   // client object
+  const [activateDate,   setActivateDate]   = useState("");
+  const [activating,     setActivating]     = useState(false);
+ 
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch("/api/v1/admin/clients");
+      setClients(await r.json());
+    } catch { setClients([]); }
+    finally { setLoading(false); }
+  };
+ 
+  useEffect(() => { load(); }, []);
+ 
+  const createClient = async () => {
+    if (!form.name.trim())         { setFormErr("Company name is required"); return; }
+    if (!form.contact_name.trim()) { setFormErr("Contact name is required"); return; }
+    if (!form.access_until)        { setFormErr("Access until date is required"); return; }
+    setCreating(true); setFormErr("");
+    try {
+      const r = await apiFetch("/api/v1/admin/clients", {
+        method: "POST",
+        body: JSON.stringify({
+          name:          form.name.trim(),
+          contact_name:  form.contact_name.trim(),
+          contact_email: form.contact_email.trim() || null,
+          access_until:  form.access_until,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setFormErr(d.detail || "Failed to create client"); return; }
+      setShowCreds({ username: d.username, temporary_password: d.temporary_password, client_name: d.client.name });
+      setShowCreate(false);
+      setForm({ name: "", contact_name: "", contact_email: "", access_until: "" });
+      load();
+    } catch { setFormErr("Network error"); }
+    finally { setCreating(false); }
+  };
+ 
+  const deactivate = async (clientId) => {
+    if (!confirm("Immediately block this client from logging in?")) return;
+    await apiFetch(`/api/v1/admin/clients/${clientId}/deactivate`, { method: "PATCH" });
+    load();
+  };
+ 
+  const openActivate = (client) => {
+    setActivateTarget(client);
+    // Pre-fill with existing access_until if present, else 90 days from today
+    if (client.access_until) {
+      setActivateDate(client.access_until);
+    } else {
+      const d = new Date();
+      d.setDate(d.getDate() + 90);
+      setActivateDate(d.toISOString().slice(0, 10));
+    }
+  };
+ 
+  const confirmActivate = async () => {
+    if (!activateDate) return;
+    setActivating(true);
+    try {
+      const endpoint = activateTarget.is_active
+        ? `/api/v1/admin/clients/${activateTarget.id}/extend`
+        : `/api/v1/admin/clients/${activateTarget.id}/activate`;
+      await apiFetch(endpoint, {
+        method: "PATCH",
+        body: JSON.stringify({ access_until: activateDate }),
+      });
+      setActivateTarget(null);
+      load();
+    } finally { setActivating(false); }
+  };
+ 
+  const statusBadge = (c) => {
+    if (!c.is_active) return { type: "", label: "Inactive" };
+    if (c.days_until_expiry === null) return { type: "success", label: "Active" };
+    if (c.days_until_expiry <= 0)  return { type: "error",   label: "Expired" };
+    if (c.days_until_expiry <= 14) return { type: "warning", label: `Expiring in ${c.days_until_expiry}d` };
+    return { type: "success", label: `Active · ${c.days_until_expiry}d left` };
+  };
+ 
+  const minDate = new Date();
+  minDate.setDate(minDate.getDate() + 1);
+  const minDateStr = minDate.toISOString().slice(0, 10);
+ 
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: "16px" }}>
+        <div style={{ fontSize: "14px", fontWeight: "700", fontFamily: fontH,
+          display: "flex", alignItems: "center", gap: "7px" }}>
+          <Icon n="business" size={17} color={C.primary} />
+          Client Accounts
+        </div>
+        <button style={S.btn("primary", true)} onClick={() => { setShowCreate(true); setFormErr(""); }}>
+          <Icon n="add" size={14} />New Client
+        </button>
+      </div>
+ 
+      {/* Create client form */}
+      {showCreate && (
+        <div style={{ ...S.card, border: `1px solid ${C.borderMid}`,
+          backgroundColor: "#faf9fe", marginBottom: "16px" }}>
+          <div style={{ fontSize: "13px", fontWeight: "700", fontFamily: fontH,
+            color: C.primary, marginBottom: "14px" }}>Create New Client</div>
+          <div style={{ display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: "12px", marginBottom: "12px" }}>
+            <div>
+              <label style={S.label}>Company Name *</label>
+              <input style={S.input} placeholder="e.g. Teach For India"
+                value={form.name}
+                onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div>
+              <label style={S.label}>Contact Person *</label>
+              <input style={S.input} placeholder="Primary contact name"
+                value={form.contact_name}
+                onChange={e => setForm(p => ({ ...p, contact_name: e.target.value }))} />
+            </div>
+            <div>
+              <label style={S.label}>Contact Email</label>
+              <input style={S.input} type="email" placeholder="contact@client.com"
+                value={form.contact_email}
+                onChange={e => setForm(p => ({ ...p, contact_email: e.target.value }))} />
+            </div>
+            <div>
+              <label style={S.label}>Access Until *</label>
+              <input style={S.input} type="date" min={minDateStr}
+                value={form.access_until}
+                onChange={e => setForm(p => ({ ...p, access_until: e.target.value }))} />
+            </div>
+          </div>
+ 
+          {/* Info box */}
+          <div style={{ backgroundColor: C.primaryDim, border: `1px solid rgba(98,100,244,0.15)`,
+            borderRadius: "8px", padding: "10px 13px", marginBottom: "12px",
+            fontSize: "12px", color: C.textMid, display: "flex", gap: "8px", alignItems: "flex-start" }}>
+            <Icon n="info" size={14} color={C.primary} style={{ flexShrink: 0, marginTop: "1px" }} />
+            <span>
+              A login account will be created automatically. The username and password
+              are shown <strong>once only</strong> — copy and share with the client.
+              The account starts <strong>inactive</strong> until you activate it.
+            </span>
+          </div>
+ 
+          {formErr && (
+            <div style={{ fontSize: "12px", color: C.error, marginBottom: "10px",
+              display: "flex", alignItems: "center", gap: "5px" }}>
+              <Icon n="error" size={13} color={C.error} />{formErr}
+            </div>
+          )}
+ 
+          <div style={S.row}>
+            <button style={{ ...S.btn("primary", true), opacity: creating ? 0.6 : 1 }}
+              onClick={createClient} disabled={creating}>
+              <Icon n="person_add" size={13} />{creating ? "Creating…" : "Create Client"}
+            </button>
+            <button style={S.btn("outline", true)}
+              onClick={() => { setShowCreate(false); setFormErr(""); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+ 
+      {/* Credentials one-time modal */}
+      {showCreds && (
+        <div style={S.modal} onClick={() => setShowCreds(null)}>
+          <div style={{ ...S.modalWrap, maxWidth: "460px" }}
+            onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "30px", height: "30px", borderRadius: "8px",
+                  backgroundColor: C.successLight,
+                  display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon n="key" size={15} color={C.success} />
+                </div>
+                <div>
+                  <div style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>
+                    Client Created
+                  </div>
+                  <div style={{ fontSize: "11px", color: C.muted }}>{showCreds.client_name}</div>
+                </div>
+              </div>
+            </div>
+            <div style={S.modalBody}>
+              <div style={{ backgroundColor: C.warningLight,
+                border: `1px solid rgba(217,119,6,0.3)`,
+                borderRadius: "10px", padding: "12px 14px", marginBottom: "16px",
+                fontSize: "13px", color: "#92400E",
+                display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                <Icon n="warning" size={15} color={C.warning} style={{ flexShrink: 0, marginTop: "1px" }} />
+                <span>
+                  These credentials are shown <strong>once only</strong> and cannot be
+                  retrieved again. Copy them now and share with the client.
+                </span>
+              </div>
+ 
+              {[
+                { label: "Username", value: showCreds.username },
+                { label: "Password", value: showCreds.temporary_password },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ marginBottom: "12px" }}>
+                  <div style={S.label}>{label}</div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <div style={{
+                      flex: 1, padding: "9px 13px", borderRadius: "10px",
+                      backgroundColor: C.surface, border: `1px solid ${C.border}`,
+                      fontFamily: font, fontSize: "14px", fontWeight: "700",
+                      color: C.text, letterSpacing: "0.02em",
+                    }}>{value}</div>
+                    <button style={S.btn("outline", true)}
+                      onClick={() => navigator.clipboard.writeText(value)}>
+                      <Icon n="content_copy" size={14} />Copy
+                    </button>
+                  </div>
+                </div>
+              ))}
+ 
+              <div style={{ fontSize: "12px", color: C.muted, marginTop: "4px" }}>
+                The account is currently <strong>inactive</strong>. Activate it from the
+                client list when ready.
+              </div>
+            </div>
+            <div style={S.modalFoot}>
+              <button style={S.btn("primary")} onClick={() => setShowCreds(null)}>
+                <Icon n="check" size={14} />Done — I've copied the credentials
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+ 
+      {/* Activate / Extend modal */}
+      {activateTarget && (
+        <div style={S.modal} onClick={() => setActivateTarget(null)}>
+          <div style={{ ...S.modalWrap, maxWidth: "400px" }}
+            onClick={e => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div style={{ fontSize: "15px", fontWeight: "700", fontFamily: fontH }}>
+                {activateTarget.is_active ? "Extend Access" : "Activate Client"}
+              </div>
+              <button onClick={() => setActivateTarget(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}>
+                <Icon n="close" size={20} />
+              </button>
+            </div>
+            <div style={S.modalBody}>
+              <div style={{ fontSize: "13px", color: C.textMid, marginBottom: "14px" }}>
+                {activateTarget.name} · {activateTarget.contact_name}
+              </div>
+              <label style={S.label}>Access Until *</label>
+              <input style={{ ...S.input, marginTop: "4px" }} type="date"
+                min={minDateStr} value={activateDate}
+                onChange={e => setActivateDate(e.target.value)} />
+            </div>
+            <div style={S.modalFoot}>
+              <button
+                style={{ ...S.btn("primary"), opacity: activating ? 0.6 : 1 }}
+                onClick={confirmActivate} disabled={activating || !activateDate}>
+                <Icon n="check" size={14} />
+                {activating ? "Saving…" : activateTarget.is_active ? "Extend" : "Activate"}
+              </button>
+              <button style={S.btn("outline")} onClick={() => setActivateTarget(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+ 
+      {/* Client list */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "40px", color: C.muted }}>
+          <div style={{ width: "24px", height: "24px", border: `3px solid ${C.primary}`,
+            borderTopColor: "transparent", borderRadius: "50%",
+            animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+          Loading clients…
+        </div>
+      ) : clients.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px", color: C.muted }}>
+          <Icon n="business" size={36} color={C.border}
+            style={{ display: "block", margin: "0 auto 12px" }} />
+          <div style={{ fontSize: "14px", fontWeight: "600", fontFamily: fontH }}>
+            No clients yet
+          </div>
+          <div style={{ fontSize: "13px", marginTop: "5px" }}>
+            Click "New Client" to add one
+          </div>
+        </div>
+      ) : isMobile ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {clients.map(c => {
+            const badge = statusBadge(c);
+            return (
+              <div key={c.id} style={S.cardMobile}>
+                <div style={{ display: "flex", justifyContent: "space-between",
+                  alignItems: "flex-start", marginBottom: "8px" }}>
+                  <div>
+                    <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>
+                      {c.name}
+                    </div>
+                    <div style={{ fontSize: "12px", color: C.muted }}>{c.contact_name}</div>
+                  </div>
+                  <span style={S.badge(badge.type)}>{badge.label}</span>
+                </div>
+                <div style={{ fontSize: "12px", color: C.muted, marginBottom: "10px" }}>
+                  {c.project_count} project{c.project_count !== 1 ? "s" : ""}
+                  {c.access_until && ` · Until ${fmtDate(c.access_until)}`}
+                </div>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  <button style={S.btn("outline", true)} onClick={() => openActivate(c)}>
+                    <Icon n={c.is_active ? "date_range" : "check_circle"} size={13} />
+                    {c.is_active ? "Extend" : "Activate"}
+                  </button>
+                  {c.is_active && (
+                    <button style={S.btn("danger", true)} onClick={() => deactivate(c.id)}>
+                      <Icon n="block" size={13} />Deactivate
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <table style={S.table}>
+          <thead>
+            <tr>
+              {["Client", "Contact", "Projects", "Status", "Access Until", "Actions"].map(h => (
+                <th key={h} style={S.th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {clients.map(c => {
+              const badge = statusBadge(c);
+              return (
+                <tr key={c.id} className="log-row">
+                  <td style={S.td}>
+                    <div style={{ fontWeight: "700", fontSize: "13px" }}>{c.name}</div>
+                  </td>
+                  <td style={{ ...S.td, fontSize: "12px", color: C.muted }}>
+                    {c.contact_name}
+                    {c.contact_email && (
+                      <div style={{ fontSize: "11px" }}>{c.contact_email}</div>
+                    )}
+                  </td>
+                  <td style={{ ...S.td, fontFamily: font, fontSize: "12px",
+                    color: C.primary, fontWeight: "600" }}>
+                    {c.project_count}
+                  </td>
+                  <td style={S.td}>
+                    <span style={S.badge(badge.type)}>{badge.label}</span>
+                  </td>
+                  <td style={{ ...S.td, fontSize: "12px", color: C.muted }}>
+                    {c.access_until ? fmtDate(c.access_until) : "—"}
+                  </td>
+                  <td style={S.td}>
+                    <div style={S.row}>
+                      <button style={S.btn("outline", true)} onClick={() => openActivate(c)}>
+                        <Icon n={c.is_active ? "date_range" : "check_circle"} size={13} />
+                        {c.is_active ? "Extend" : "Activate"}
+                      </button>
+                      {c.is_active && (
+                        <button style={S.btn("danger", true)}
+                          onClick={() => deactivate(c.id)}>
+                          <Icon n="block" size={13} />Deactivate
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // ─── ADMIN TAB ────────────────────────────────────────────────────────────────
 function AdminTab() {
   const isMobile = useIsMobile();
+
   const [section, setSection] = useState("dashboard");
-  const [users, setUsers] = useState([]); const [allLogs, setAllLogs] = useState([]); const [stats, setStats] = useState(null);
-  const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "user" });
-  const [msg, setMsg] = useState(""); const [resetTarget, setResetTarget] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [allLogs, setAllLogs] = useState([]);
+  const [stats, setStats] = useState(null);
+
+  const [newUser, setNewUser] = useState({
+    username: "",
+    email: "",
+    password: "",
+    role: "user",
+  });
+
+  const [msg, setMsg] = useState("");
+  const [resetTarget, setResetTarget] = useState(null);
+
   const [dateFilter, setDateFilter] = useState("all");
   const [skillFilter, setSkillFilter] = useState("");
   const [skillSearchResults, setSkillSearchResults] = useState(null);
   const [skillSearching, setSkillSearching] = useState(false);
-  const [locationData, setLocationData] = useState(null); // {skill, total, by_location}
+  const [locationData, setLocationData] = useState(null); // { skill, total, by_location }
+
   const [logPage, setLogPage] = useState(1);
   const [logUserFilter, setLogUserFilter] = useState("all");
   const [logActionFilter, setLogActionFilter] = useState("all");
+
   const LOG_PAGE_SIZE = 20;
 
   const load = async () => {
@@ -1899,90 +2316,180 @@ function AdminTab() {
       const [uRes, lRes, sRes] = await Promise.all([
         apiFetch("/api/v1/auth/users"),
         apiFetch("/api/v1/auth/audit-logs"),
-        apiFetch("/api/v1/candidates/count")
+        apiFetch("/api/v1/candidates/count"),
       ]);
+
       setUsers(await uRes.json());
       setAllLogs(await lRes.json());
       setStats(await sRes.json());
     } catch {}
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const createUser = async () => {
     if (!newUser.username || !newUser.email || !newUser.password) return;
-    if (!pwValid(newUser.password)) { setMsg("Password does not meet security requirements"); return; }
-    const res = await apiFetch("/api/v1/auth/users", { method: "POST", body: JSON.stringify(newUser) });
-    if (res.ok) { setMsg("User created"); setNewUser({ username: "", email: "", password: "", role: "user" }); load(); setTimeout(() => setMsg(""), 4000); }
-    else { const e = await res.json(); setMsg(e.detail || "Failed"); }
+
+    if (!pwValid(newUser.password)) {
+      setMsg("Password does not meet security requirements");
+      return;
+    }
+
+    const res = await apiFetch("/api/v1/auth/users", {
+      method: "POST",
+      body: JSON.stringify(newUser),
+    });
+
+    if (res.ok) {
+      setMsg("User created");
+      setNewUser({
+        username: "",
+        email: "",
+        password: "",
+        role: "user",
+      });
+      load();
+      setTimeout(() => setMsg(""), 4000);
+    } else {
+      const e = await res.json();
+      setMsg(e.detail || "Failed");
+    }
   };
 
   const deleteUser = async (id) => {
     if (!confirm("Delete this user?")) return;
-    await apiFetch(`/api/v1/auth/users/${id}`, { method: "DELETE" }); load();
+    await apiFetch(`/api/v1/auth/users/${id}`, { method: "DELETE" });
+    load();
   };
 
   const getDateBounds = () => {
     const now = new Date();
-    if (dateFilter === "today") { const start = new Date(now); start.setHours(0,0,0,0); return { start, label: "Today" }; }
-    if (dateFilter === "week") { const start = new Date(now); start.setDate(now.getDate() - 7); return { start, label: "Last 7 days" }; }
-    if (dateFilter === "month") { const start = new Date(now); start.setDate(now.getDate() - 30); return { start, label: "Last 30 days" }; }
+
+    if (dateFilter === "today") {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { start, label: "Today" };
+    }
+
+    if (dateFilter === "week") {
+      const start = new Date(now);
+      start.setDate(now.getDate() - 7);
+      return { start, label: "Last 7 days" };
+    }
+
+    if (dateFilter === "month") {
+      const start = new Date(now);
+      start.setDate(now.getDate() - 30);
+      return { start, label: "Last 30 days" };
+    }
+
     return { start: null, label: "All time" };
   };
 
   const filterLogsByDate = (logs) => {
     const { start } = getDateBounds();
     if (!start) return logs;
-    return logs.filter(l => new Date(l.created_at) >= start);
+    return logs.filter((l) => new Date(l.created_at) >= start);
   };
 
   const periodLogs = filterLogsByDate(allLogs);
-  const periodUploads = periodLogs.filter(l => l.action === "bulk_upload").length;
-  const periodViews = periodLogs.filter(l => l.action === "view_profile").length;
-  const periodCreated = periodLogs.filter(l => l.detail?.includes("created")).length;
-  const periodDuplicates = periodLogs.filter(l => l.detail?.includes("duplicate")).length;
+  const periodUploads = periodLogs.filter((l) => l.action === "bulk_upload").length;
+  const periodViews = periodLogs.filter((l) => l.action === "view_profile").length;
+  const periodCreated = periodLogs.filter((l) => l.detail?.includes("created")).length;
+  const periodDuplicates = periodLogs.filter((l) => l.detail?.includes("duplicate")).length;
 
   const buildSparkline = () => {
     const days = [];
+
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const label = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-      const start = new Date(d); start.setHours(0,0,0,0);
-      const end = new Date(d); end.setHours(23,59,59,999);
-      const value = allLogs.filter(l => l.action === "bulk_upload" && new Date(l.created_at) >= start && new Date(l.created_at) <= end).length;
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+
+      const label = d.toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+      });
+
+      const start = new Date(d);
+      start.setHours(0, 0, 0, 0);
+
+      const end = new Date(d);
+      end.setHours(23, 59, 59, 999);
+
+      const value = allLogs.filter(
+        (l) =>
+          l.action === "bulk_upload" &&
+          new Date(l.created_at) >= start &&
+          new Date(l.created_at) <= end
+      ).length;
+
       days.push({ label, value });
     }
+
     return days;
   };
 
-  const userActivity = users.map(u => ({
-    username: u.username,
-    uploads: allLogs.filter(l => l.username === u.username && l.action === "bulk_upload").length,
-    views: allLogs.filter(l => l.username === u.username && l.action === "view_profile").length,
-    logins: allLogs.filter(l => l.username === u.username && l.action === "login").length,
-    lastSeen: allLogs.filter(l => l.username === u.username).sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at,
-  })).sort((a,b) => b.uploads - a.uploads);
+  const userActivity = users
+    .map((u) => ({
+      username: u.username,
+      uploads: allLogs.filter(
+        (l) => l.username === u.username && l.action === "bulk_upload"
+      ).length,
+      views: allLogs.filter(
+        (l) => l.username === u.username && l.action === "view_profile"
+      ).length,
+      logins: allLogs.filter(
+        (l) => l.username === u.username && l.action === "login"
+      ).length,
+      lastSeen: allLogs
+        .filter((l) => l.username === u.username)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at,
+    }))
+    .sort((a, b) => b.uploads - a.uploads);
 
   const searchBySkill = async (skillOverride) => {
     const skill = skillOverride || skillFilter;
     if (!skill.trim()) return;
+
     setSkillSearching(true);
+
     try {
       const res = await apiFetch("/api/v1/candidates/search", {
         method: "POST",
-        body: JSON.stringify({ skill_keywords: [skill.trim()], skill_match: "OR", page: 1, page_size: 1 })
+        body: JSON.stringify({
+          skill_keywords: [skill.trim()],
+          skill_match: "OR",
+          page: 1,
+          page_size: 1,
+        }),
       });
+
       const data = await res.json();
-      setSkillSearchResults({ skill: skill.trim(), count: data.total || 0 });
-    } catch { setSkillSearchResults({ skill: skill.trim(), count: "—" }); }
-    finally { setSkillSearching(false); }
+      setSkillSearchResults({
+        skill: skill.trim(),
+        count: data.total || 0,
+      });
+    } catch {
+      setSkillSearchResults({
+        skill: skill.trim(),
+        count: "—",
+      });
+    } finally {
+      setSkillSearching(false);
+    }
   };
 
   const showLocationChart = async (skill) => {
     const s = skill || skillFilter;
     if (!s.trim()) return;
+
     try {
-      const res = await apiFetch(`/api/v1/skills/${encodeURIComponent(s.trim())}/locations`);
+      const res = await apiFetch(
+        `/api/v1/skills/${encodeURIComponent(s.trim())}/locations`
+      );
+
       if (res.ok) {
         const data = await res.json();
         setLocationData(data);
@@ -1990,20 +2497,26 @@ function AdminTab() {
     } catch {}
   };
 
-  const filteredLogs = allLogs.filter(l => {
+  const filteredLogs = allLogs.filter((l) => {
     if (logUserFilter !== "all" && l.username !== logUserFilter) return false;
     if (logActionFilter !== "all" && l.action !== logActionFilter) return false;
     return true;
   });
+
   const logTotalPages = Math.max(1, Math.ceil(filteredLogs.length / LOG_PAGE_SIZE));
-  const pagedLogs = filteredLogs.slice((logPage - 1) * LOG_PAGE_SIZE, logPage * LOG_PAGE_SIZE);
-  const uniqueLogUsers = [...new Set(allLogs.map(l => l.username))];
-  const uniqueLogActions = [...new Set(allLogs.map(l => l.action))];
+  const pagedLogs = filteredLogs.slice(
+    (logPage - 1) * LOG_PAGE_SIZE,
+    logPage * LOG_PAGE_SIZE
+  );
+
+  const uniqueLogUsers = [...new Set(allLogs.map((l) => l.username))];
+  const uniqueLogActions = [...new Set(allLogs.map((l) => l.action))];
 
   const sideItems = [
     { key: "dashboard", icon: "dashboard", label: "Dashboard" },
     { key: "users", icon: "group", label: "Team" },
-    { key: "logs", icon: "history", label: "Logs" }
+    { key: "clients", icon: "business", label: "Clients" },
+    { key: "logs", icon: "history", label: "Logs" },
   ];
 
   const actionBadgeType = (action) => {
@@ -2015,41 +2528,1287 @@ function AdminTab() {
     return "";
   };
 
-  return (
-    <div>
-      {!isMobile && <><div style={S.pageTitle}>Admin Panel</div><div style={S.pageSub}>Manage team access and system statistics</div></>}
-      {isMobile ? (
-        <div>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "16px", overflowX: "auto", paddingBottom: "4px" }}>
-            {sideItems.map(({ key, icon, label }) => (
-              <button key={key} onClick={() => setSection(key)} style={{ ...S.btn(section === key ? "primary" : "outline", true), whiteSpace: "nowrap" }}>
-                <Icon n={icon} size={14} />{label}
+  function renderAdminContent() {
+    if (section === "dashboard") {
+      return (
+        <div className="fade-up">
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              marginBottom: "16px",
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: "700",
+                color: C.muted,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                fontFamily: fontH,
+              }}
+            >
+              Period:
+            </span>
+
+            {[
+              ["today", "Today"],
+              ["week", "Last 7 days"],
+              ["month", "Last 30 days"],
+              ["all", "All time"],
+            ].map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setDateFilter(val)}
+                style={{
+                  padding: "5px 14px",
+                  borderRadius: "20px",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  fontFamily: fontB,
+                  transition: "all 0.15s",
+                  backgroundColor: dateFilter === val ? C.primary : C.surface,
+                  color: dateFilter === val ? "#fff" : C.muted,
+                }}
+              >
+                {label}
               </button>
             ))}
           </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)",
+              gap: "12px",
+              marginBottom: "16px",
+            }}
+          >
+            {[
+              {
+                label: "Total Candidates",
+                value: stats?.total?.toLocaleString() ?? "—",
+                icon: "people",
+                color: C.primary,
+                bg: C.primaryLight,
+              },
+              {
+                label: "Uploads (period)",
+                value: periodUploads,
+                icon: "upload_file",
+                color: "#f59e0b",
+                bg: "rgba(245,158,11,0.1)",
+              },
+              {
+                label: "New CVs (period)",
+                value: periodCreated,
+                icon: "person_add",
+                color: C.success,
+                bg: C.successLight,
+              },
+              {
+                label: "Profile Views",
+                value: periodViews,
+                icon: "visibility",
+                color: C.info,
+                bg: C.infoLight,
+              },
+              {
+                label: "Duplicates (period)",
+                value: periodDuplicates,
+                icon: "content_copy",
+                color: C.muted,
+                bg: C.surface,
+              },
+            ].map(({ label, value, icon, color, bg }) => (
+              <div
+                key={label}
+                className="stat-card"
+                style={{
+                  ...S.card,
+                  marginBottom: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: "700",
+                      color: C.muted,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                      fontFamily: fontH,
+                      lineHeight: "1.3",
+                    }}
+                  >
+                    {label}
+                  </div>
+
+                  <div
+                    style={{
+                      width: "30px",
+                      height: "30px",
+                      borderRadius: "8px",
+                      backgroundColor: bg,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Icon n={icon} size={15} color={color} />
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    fontSize: "26px",
+                    fontWeight: "800",
+                    color,
+                    fontFamily: fontH,
+                    letterSpacing: "-0.02em",
+                  }}
+                >
+                  {value ?? "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+              gap: "14px",
+              marginBottom: "16px",
+            }}
+          >
+            <div style={S.card}>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  color: C.muted,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  marginBottom: "14px",
+                  fontFamily: fontH,
+                }}
+              >
+                Source Breakdown
+              </div>
+
+              {stats ? (
+                <SourceDonut data={stats.by_source} total={stats.total} />
+              ) : (
+                <div style={{ color: C.muted, fontSize: "13px" }}>Loading…</div>
+              )}
+            </div>
+
+            <div style={S.card}>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  color: C.muted,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  marginBottom: "14px",
+                  fontFamily: fontH,
+                }}
+              >
+                Upload Activity (7 days)
+              </div>
+
+              <MiniBar data={buildSparkline()} color={C.primary} height={52} />
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginTop: "6px",
+                }}
+              >
+                {buildSparkline().map((d, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      fontSize: "9px",
+                      color: C.muted,
+                      textAlign: "center",
+                      flex: 1,
+                    }}
+                  >
+                    {d.label.split(" ")[0]}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={S.card}>
+            <div
+              style={{
+                fontSize: "11px",
+                fontWeight: "700",
+                color: C.muted,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                marginBottom: "12px",
+                fontFamily: fontH,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <Icon n="auto_awesome" size={13} color={C.primary} />
+              Skill Pool Lookup
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <input
+                style={{ ...S.input, maxWidth: "260px" }}
+                placeholder="e.g. Python, Project Management, NGO"
+                value={skillFilter}
+                onChange={(e) => setSkillFilter(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && searchBySkill()}
+              />
+
+              <button
+                style={S.btn("primary", true)}
+                onClick={() => searchBySkill()}
+                disabled={skillSearching || !skillFilter.trim()}
+              >
+                <Icon n="query_stats" size={14} />
+                {skillSearching ? "Searching…" : "Check Pool"}
+              </button>
+
+              {skillSearchResults && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "7px 14px",
+                    borderRadius: "10px",
+                    backgroundColor: C.primaryDim,
+                    border: `1px solid rgba(98,100,244,0.2)`,
+                  }}
+                >
+                  <Icon n="groups" size={16} color={C.primary} />
+
+                  <span
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: "600",
+                      color: C.text,
+                    }}
+                  >
+                    <strong
+                      style={{
+                        color: C.primary,
+                        fontFamily: fontH,
+                        fontSize: "17px",
+                      }}
+                    >
+                      {skillSearchResults.count}
+                    </strong>{" "}
+                    candidates with <strong>"{skillSearchResults.skill}"</strong>
+                  </span>
+
+                  <button
+                    style={{
+                      ...S.btn("outline", true),
+                      padding: "4px 10px",
+                      fontSize: "11px",
+                    }}
+                    onClick={() => showLocationChart(skillSearchResults.skill)}
+                  >
+                    <Icon n="pie_chart" size={12} />
+                    By Location
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                marginTop: "10px",
+                display: "flex",
+                gap: "7px",
+                flexWrap: "wrap",
+              }}
+            >
+              {[
+                "Python",
+                "Project Management",
+                "NGO",
+                "Fundraising",
+                "Data Analysis",
+                "Excel",
+                "Communications",
+              ].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setSkillFilter(s);
+                    searchBySkill(s);
+                  }}
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: "20px",
+                    border: `1px solid ${C.border}`,
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    backgroundColor: skillFilter === s ? C.primaryDim : "transparent",
+                    color: skillFilter === s ? C.primary : C.muted,
+                    fontFamily: fontB,
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={S.card}>
+            <div
+              style={{
+                fontSize: "11px",
+                fontWeight: "700",
+                color: C.muted,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                marginBottom: "14px",
+                fontFamily: fontH,
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <Icon n="leaderboard" size={13} color={C.primary} />
+              Team Activity (all time)
+            </div>
+
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  {["User", "Role", "Uploads", "Profile Views", "Logins", "Last Active"].map(
+                    (h) => (
+                      <th key={h} style={S.th}>
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+
+              <tbody>
+                {userActivity.map((u, i) => (
+                  <tr key={i} className="log-row">
+                    <td style={S.td}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "28px",
+                            height: "28px",
+                            borderRadius: "50%",
+                            backgroundColor: C.primaryLight,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            color: C.primary,
+                            fontFamily: fontH,
+                          }}
+                        >
+                          {u.username.slice(0, 2).toUpperCase()}
+                        </div>
+
+                        <span style={{ fontWeight: "600", fontSize: "13px" }}>
+                          {u.username}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td style={S.td}>
+                      <span
+                        style={S.badge(
+                          users.find((x) => x.username === u.username)?.role === "admin"
+                            ? "admin"
+                            : ""
+                        )}
+                      >
+                        {users.find((x) => x.username === u.username)?.role || "user"}
+                      </span>
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontFamily: font,
+                        fontWeight: "700",
+                        color: C.primary,
+                      }}
+                    >
+                      {u.uploads}
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontFamily: font,
+                        color: C.info,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {u.views}
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontFamily: font,
+                        color: C.muted,
+                      }}
+                    >
+                      {u.logins}
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "12px",
+                        color: C.muted,
+                      }}
+                    >
+                      {u.lastSeen ? fmtDateTime(u.lastSeen) : "Never"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    if (section === "users") {
+      return (
+        <>
+          <div style={isMobile ? S.cardMobile : S.card}>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: "700",
+                marginBottom: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                fontFamily: fontH,
+              }}
+            >
+              <Icon n="person_add" size={17} color={C.primary} />
+              Add New User
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile
+                  ? "1fr"
+                  : "1fr 1fr 1fr 1fr auto",
+                gap: "12px",
+                alignItems: "start",
+              }}
+            >
+              <div>
+                <label style={S.label}>Username</label>
+                <input
+                  style={S.input}
+                  type="text"
+                  placeholder="username"
+                  value={newUser.username}
+                  onChange={(e) =>
+                    setNewUser((p) => ({ ...p, username: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div>
+                <label style={S.label}>Email</label>
+                <input
+                  style={S.input}
+                  type="email"
+                  placeholder="user@atrios.in"
+                  value={newUser.email}
+                  onChange={(e) =>
+                    setNewUser((p) => ({ ...p, email: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div>
+                <label style={S.label}>Password</label>
+                <PasswordInput
+                  value={newUser.password}
+                  placeholder="Strong password"
+                  showStrength={true}
+                  onChange={(e) =>
+                    setNewUser((p) => ({ ...p, password: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div>
+                <label style={S.label}>Role</label>
+                <select
+                  style={S.select}
+                  value={newUser.role}
+                  onChange={(e) =>
+                    setNewUser((p) => ({ ...p, role: e.target.value }))
+                  }
+                >
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              <div style={{ paddingTop: isMobile ? 0 : "22px" }}>
+                <button
+                  style={{
+                    ...S.btn("success"),
+                    width: isMobile ? "100%" : "auto",
+                    justifyContent: "center",
+                    padding: "10px 18px",
+                  }}
+                  onClick={createUser}
+                  disabled={!pwValid(newUser.password)}
+                >
+                  <Icon n="person_add" size={14} />
+                  Create
+                </button>
+              </div>
+            </div>
+
+            {msg && (
+              <div
+                style={{
+                  marginTop: "10px",
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  color: msg === "User created" ? C.success : C.error,
+                }}
+              >
+                <Icon
+                  n={msg === "User created" ? "check_circle" : "error"}
+                  size={14}
+                  color={msg === "User created" ? C.success : C.error}
+                />
+                {msg}
+              </div>
+            )}
+          </div>
+
+          <div style={isMobile ? {} : S.card}>
+            {isMobile ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {users.map((u, i) => (
+                  <div key={i} style={S.cardMobile}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: "700",
+                            fontSize: "14px",
+                            fontFamily: fontH,
+                          }}
+                        >
+                          {u.username}
+                        </div>
+                        <div style={{ fontSize: "12px", color: C.muted }}>
+                          {u.email}
+                        </div>
+                      </div>
+
+                      <span style={S.badge(u.role === "admin" ? "admin" : "")}>
+                        {u.role}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        paddingTop: "8px",
+                        borderTop: `1px solid ${C.border}`,
+                      }}
+                    >
+                      <button
+                        style={S.btn("outline", true)}
+                        onClick={() => setResetTarget(u)}
+                      >
+                        <Icon n="key" size={13} />
+                        Reset PW
+                      </button>
+
+                      <button
+                        style={S.btn("danger", true)}
+                        onClick={() => deleteUser(u.id)}
+                      >
+                        <Icon n="delete" size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <table style={S.table}>
+                <thead>
+                  <tr>
+                    {["Username", "Email", "Role", "Status", "Last Login", "Actions"].map(
+                      (h) => (
+                        <th key={h} style={S.th}>
+                          {h}
+                        </th>
+                      )
+                    )}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {users.map((u, i) => (
+                    <tr key={i} className="log-row">
+                      <td
+                        style={{
+                          ...S.td,
+                          fontFamily: font,
+                          fontWeight: "600",
+                        }}
+                      >
+                        {u.username}
+                      </td>
+
+                      <td
+                        style={{
+                          ...S.td,
+                          fontSize: "13px",
+                          color: C.textMid,
+                        }}
+                      >
+                        {u.email}
+                      </td>
+
+                      <td style={S.td}>
+                        <span style={S.badge(u.role === "admin" ? "admin" : "")}>
+                          {u.role}
+                        </span>
+                      </td>
+
+                      <td style={S.td}>
+                        <span style={S.badge(u.is_active ? "success" : "error")}>
+                          {u.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+
+                      <td
+                        style={{
+                          ...S.td,
+                          fontSize: "12px",
+                          color: C.muted,
+                        }}
+                      >
+                        {u.last_login ? new Date(u.last_login).toLocaleString() : "Never"}
+                      </td>
+
+                      <td style={S.td}>
+                        <div style={S.row}>
+                          <button
+                            style={S.btn("outline", true)}
+                            onClick={() => setResetTarget(u)}
+                          >
+                            <Icon n="key" size={13} />
+                            Reset PW
+                          </button>
+
+                          <button
+                            style={S.btn("danger", true)}
+                            onClick={() => deleteUser(u.id)}
+                          >
+                            <Icon n="delete" size={13} />
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      );
+    }
+
+    if (section === "logs") {
+      return (
+        <div style={S.card}>
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              marginBottom: "16px",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                fontWeight: "700",
+                fontSize: "14px",
+                fontFamily: fontH,
+              }}
+            >
+              <Icon n="history" size={17} color={C.primary} />
+              Audit Logs
+              <span
+                style={{
+                  fontSize: "12px",
+                  fontWeight: "500",
+                  color: C.muted,
+                  fontFamily: font,
+                }}
+              >
+                ({filteredLogs.length} entries)
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <div style={{ position: "relative" }}>
+                <select
+                  style={{
+                    ...S.select,
+                    width: "auto",
+                    paddingLeft: "32px",
+                    fontSize: "12px",
+                  }}
+                  value={logUserFilter}
+                  onChange={(e) => {
+                    setLogUserFilter(e.target.value);
+                    setLogPage(1);
+                  }}
+                >
+                  <option value="all">All users</option>
+                  {uniqueLogUsers.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+
+                <Icon
+                  n="person"
+                  size={13}
+                  color={C.muted}
+                  style={{
+                    position: "absolute",
+                    left: "9px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+
+              <div style={{ position: "relative" }}>
+                <select
+                  style={{
+                    ...S.select,
+                    width: "auto",
+                    paddingLeft: "32px",
+                    fontSize: "12px",
+                  }}
+                  value={logActionFilter}
+                  onChange={(e) => {
+                    setLogActionFilter(e.target.value);
+                    setLogPage(1);
+                  }}
+                >
+                  <option value="all">All actions</option>
+                  {uniqueLogActions.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+
+                <Icon
+                  n="filter_list"
+                  size={13}
+                  color={C.muted}
+                  style={{
+                    position: "absolute",
+                    left: "9px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+
+              {(logUserFilter !== "all" || logActionFilter !== "all") && (
+                <button
+                  style={S.btn("outline", true)}
+                  onClick={() => {
+                    setLogUserFilter("all");
+                    setLogActionFilter("all");
+                    setLogPage(1);
+                  }}
+                >
+                  <Icon n="close" size={12} />
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              marginBottom: "14px",
+              flexWrap: "wrap",
+            }}
+          >
+            {Object.entries(
+              filteredLogs.reduce((acc, l) => {
+                acc[l.action] = (acc[l.action] || 0) + 1;
+                return acc;
+              }, {})
+            )
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([action, count]) => (
+                <span
+                  key={action}
+                  style={{ ...S.badge(actionBadgeType(action)), cursor: "pointer" }}
+                  onClick={() => {
+                    setLogActionFilter(action);
+                    setLogPage(1);
+                  }}
+                >
+                  {action}: {count}
+                </span>
+              ))}
+          </div>
+
+          {isMobile ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {pagedLogs.map((l, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: "10px",
+                    backgroundColor: C.surface,
+                    borderRadius: "8px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: font,
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {l.username}
+                    </span>
+
+                    <span style={S.badge(actionBadgeType(l.action))}>{l.action}</span>
+                  </div>
+
+                  <div style={{ fontSize: "11px", color: C.muted }}>
+                    {new Date(l.created_at).toLocaleString()}
+                  </div>
+
+                  {l.detail && (
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: C.textMid,
+                        marginTop: "3px",
+                      }}
+                    >
+                      {l.detail}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  {["Time", "User", "Action", "Detail"].map((h) => (
+                    <th key={h} style={S.th}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {pagedLogs.map((l, i) => (
+                  <tr key={i} className="log-row">
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "11px",
+                        fontFamily: font,
+                        color: C.muted,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {new Date(l.created_at).toLocaleString()}
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontFamily: font,
+                        fontSize: "12px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "7px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "24px",
+                            height: "24px",
+                            borderRadius: "50%",
+                            backgroundColor: C.primaryLight,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "9px",
+                            fontWeight: "700",
+                            color: C.primary,
+                            fontFamily: fontH,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {l.username?.slice(0, 2).toUpperCase()}
+                        </div>
+
+                        <span style={{ fontWeight: "600" }}>{l.username}</span>
+                      </div>
+                    </td>
+
+                    <td style={S.td}>
+                      <span style={S.badge(actionBadgeType(l.action))}>{l.action}</span>
+                    </td>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "12px",
+                        color: C.muted,
+                        maxWidth: "400px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {l.detail || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              gap: "6px",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingTop: "14px",
+              borderTop: `1px solid ${C.border}`,
+              marginTop: "4px",
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontSize: "12px", color: C.muted }}>
+              Showing <strong>{(logPage - 1) * LOG_PAGE_SIZE + 1}</strong>–
+              <strong>{Math.min(logPage * LOG_PAGE_SIZE, filteredLogs.length)}</strong> of{" "}
+              <strong>{filteredLogs.length}</strong>
+            </span>
+
+            <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+              <button
+                style={{
+                  ...S.btn("outline", true),
+                  opacity: logPage <= 1 ? 0.4 : 1,
+                }}
+                disabled={logPage <= 1}
+                onClick={() => setLogPage(1)}
+              >
+                <Icon n="first_page" size={14} />
+              </button>
+
+              <button
+                style={{
+                  ...S.btn("outline", true),
+                  opacity: logPage <= 1 ? 0.4 : 1,
+                }}
+                disabled={logPage <= 1}
+                onClick={() => setLogPage((p) => p - 1)}
+              >
+                <Icon n="chevron_left" size={14} />
+                Prev
+              </button>
+
+              {Array.from({ length: Math.min(5, logTotalPages) }, (_, i) => {
+                const p = Math.max(1, Math.min(logPage - 2, logTotalPages - 4)) + i;
+                return p <= logTotalPages ? (
+                  <button
+                    key={p}
+                    style={{
+                      ...S.btn(p === logPage ? "primary" : "outline", true),
+                      minWidth: "34px",
+                      justifyContent: "center",
+                    }}
+                    onClick={() => setLogPage(p)}
+                  >
+                    {p}
+                  </button>
+                ) : null;
+              })}
+
+              <button
+                style={{
+                  ...S.btn("outline", true),
+                  opacity: logPage >= logTotalPages ? 0.4 : 1,
+                }}
+                disabled={logPage >= logTotalPages}
+                onClick={() => setLogPage((p) => p + 1)}
+              >
+                Next
+                <Icon n="chevron_right" size={14} />
+              </button>
+
+              <button
+                style={{
+                  ...S.btn("outline", true),
+                  opacity: logPage >= logTotalPages ? 0.4 : 1,
+                }}
+                disabled={logPage >= logTotalPages}
+                onClick={() => setLogPage(logTotalPages)}
+              >
+                <Icon n="last_page" size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (section === "clients") {
+      return <ClientsAdminSection />;
+    }
+
+    return null;
+  }
+
+  return (
+    <div>
+      {!isMobile && (
+        <>
+          <div style={S.pageTitle}>Admin Panel</div>
+          <div style={S.pageSub}>Manage team access and system statistics</div>
+        </>
+      )}
+
+      {isMobile ? (
+        <div>
+          <div
+            style={{
+              display: "flex",
+              gap: "8px",
+              marginBottom: "16px",
+              overflowX: "auto",
+              paddingBottom: "4px",
+            }}
+          >
+            {sideItems.map(({ key, icon, label }) => (
+              <button
+                key={key}
+                onClick={() => setSection(key)}
+                style={{
+                  ...S.btn(section === key ? "primary" : "outline", true),
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Icon n={icon} size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
+
           {renderAdminContent()}
         </div>
       ) : (
         <div style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}>
-          <div style={{ width: "200px", flexShrink: 0, backgroundColor: C.white, border: `1px solid ${C.border}`, borderRadius: "14px", padding: "10px" }}>
-            <div style={{ fontSize: "9px", fontWeight: "700", color: C.muted, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 10px 10px", fontFamily: fontH }}>Menu</div>
+          <div
+            style={{
+              width: "200px",
+              flexShrink: 0,
+              backgroundColor: C.white,
+              border: `1px solid ${C.border}`,
+              borderRadius: "14px",
+              padding: "10px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "9px",
+                fontWeight: "700",
+                color: C.muted,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                padding: "4px 10px 10px",
+                fontFamily: fontH,
+              }}
+            >
+              Menu
+            </div>
+
             {sideItems.map(({ key, icon, label }) => (
-              <button key={key} onClick={() => setSection(key)}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: "9px", padding: "9px 11px", borderRadius: "8px", border: "none", cursor: "pointer", fontFamily: fontB, fontSize: "13px", fontWeight: "600", textAlign: "left", transition: "all 0.15s", marginBottom: "2px",
-                  backgroundColor: section === key ? C.primary : "transparent", color: section === key ? "#fff" : C.textMid }}>
-                <Icon n={icon} size={16} />{label}
+              <button
+                key={key}
+                onClick={() => setSection(key)}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "9px",
+                  padding: "9px 11px",
+                  borderRadius: "8px",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: fontB,
+                  fontSize: "13px",
+                  fontWeight: "600",
+                  textAlign: "left",
+                  transition: "all 0.15s",
+                  marginBottom: "2px",
+                  backgroundColor: section === key ? C.primary : "transparent",
+                  color: section === key ? "#fff" : C.textMid,
+                }}
+              >
+                <Icon n={icon} size={16} />
+                {label}
               </button>
             ))}
-            <div style={{ margin: "10px 2px", height: "1px", backgroundColor: C.border }} />
-            <div style={{ padding: "10px", backgroundColor: C.surface, borderRadius: "9px" }}>
-              <div style={{ fontSize: "10px", fontWeight: "700", color: C.primary, marginBottom: "2px", fontFamily: fontH }}>ATRIOS</div>
-              <div style={{ fontSize: "10px", color: C.muted }}>Talent Intelligence</div>
+
+            <div
+              style={{
+                margin: "10px 2px",
+                height: "1px",
+                backgroundColor: C.border,
+              }}
+            />
+
+            <div
+              style={{
+                padding: "10px",
+                backgroundColor: C.surface,
+                borderRadius: "9px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "10px",
+                  fontWeight: "700",
+                  color: C.primary,
+                  marginBottom: "2px",
+                  fontFamily: fontH,
+                }}
+              >
+                ATRIOS
+              </div>
+              <div style={{ fontSize: "10px", color: C.muted }}>
+                Talent Intelligence
+              </div>
             </div>
           </div>
+
           <div style={{ flex: 1, minWidth: 0 }}>{renderAdminContent()}</div>
         </div>
       )}
-      {resetTarget && <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />}
+
+      {resetTarget && (
+        <ResetPasswordModal
+          user={resetTarget}
+          onClose={() => setResetTarget(null)}
+        />
+      )}
+
       {locationData && (
         <LocationPieChart
           data={locationData.by_location}
@@ -2060,279 +3819,6 @@ function AdminTab() {
       )}
     </div>
   );
-
-  function renderAdminContent() {
-    if (section === "dashboard") return (
-      <div className="fade-up">
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: fontH }}>Period:</span>
-          {[["today", "Today"], ["week", "Last 7 days"], ["month", "Last 30 days"], ["all", "All time"]].map(([val, label]) => (
-            <button key={val} onClick={() => setDateFilter(val)}
-              style={{ padding: "5px 14px", borderRadius: "20px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: "600", fontFamily: fontB, transition: "all 0.15s",
-                backgroundColor: dateFilter === val ? C.primary : C.surface, color: dateFilter === val ? "#fff" : C.muted }}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: "12px", marginBottom: "16px" }}>
-          {[
-            { label: "Total Candidates", value: stats?.total?.toLocaleString() ?? "—", icon: "people", color: C.primary, bg: C.primaryLight },
-            { label: "Uploads (period)", value: periodUploads, icon: "upload_file", color: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
-            { label: "New CVs (period)", value: periodCreated, icon: "person_add", color: C.success, bg: C.successLight },
-            { label: "Profile Views", value: periodViews, icon: "visibility", color: C.info, bg: C.infoLight },
-            { label: "Duplicates (period)", value: periodDuplicates, icon: "content_copy", color: C.muted, bg: C.surface },
-          ].map(({ label, value, icon, color, bg }) => (
-            <div key={label} className="stat-card" style={{ ...S.card, marginBottom: 0, display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ fontSize: "10px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: fontH, lineHeight: "1.3" }}>{label}</div>
-                <div style={{ width: "30px", height: "30px", borderRadius: "8px", backgroundColor: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon n={icon} size={15} color={color} />
-                </div>
-              </div>
-              <div style={{ fontSize: "26px", fontWeight: "800", color, fontFamily: fontH, letterSpacing: "-0.02em" }}>{value ?? "—"}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
-          <div style={S.card}>
-            <div style={{ fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "14px", fontFamily: fontH }}>Source Breakdown</div>
-            {stats ? <SourceDonut data={stats.by_source} total={stats.total} /> : <div style={{ color: C.muted, fontSize: "13px" }}>Loading…</div>}
-          </div>
-          <div style={S.card}>
-            <div style={{ fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "14px", fontFamily: fontH }}>Upload Activity (7 days)</div>
-            <MiniBar data={buildSparkline()} color={C.primary} height={52} />
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px" }}>
-              {buildSparkline().map((d, i) => (
-                <div key={i} style={{ fontSize: "9px", color: C.muted, textAlign: "center", flex: 1 }}>{d.label.split(" ")[0]}</div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Skill Pool Lookup with location chart */}
-        <div style={S.card}>
-          <div style={{ fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "12px", fontFamily: fontH, display: "flex", alignItems: "center", gap: "6px" }}>
-            <Icon n="auto_awesome" size={13} color={C.primary} />Skill Pool Lookup
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            <input style={{ ...S.input, maxWidth: "260px" }} placeholder="e.g. Python, Project Management, NGO" value={skillFilter}
-              onChange={e => setSkillFilter(e.target.value)} onKeyDown={e => e.key === "Enter" && searchBySkill()} />
-            <button style={S.btn("primary", true)} onClick={() => searchBySkill()} disabled={skillSearching || !skillFilter.trim()}>
-              <Icon n="query_stats" size={14} />{skillSearching ? "Searching…" : "Check Pool"}
-            </button>
-            {skillSearchResults && (
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "7px 14px", borderRadius: "10px",
-                backgroundColor: C.primaryDim, border: `1px solid rgba(98,100,244,0.2)` }}>
-                <Icon n="groups" size={16} color={C.primary} />
-                <span style={{ fontSize: "13px", fontWeight: "600", color: C.text }}>
-                  <strong style={{ color: C.primary, fontFamily: fontH, fontSize: "17px" }}>{skillSearchResults.count}</strong>
-                  {" "}candidates with <strong>"{skillSearchResults.skill}"</strong>
-                </span>
-                {/* Location chart button */}
-                <button style={{ ...S.btn("outline", true), padding: "4px 10px", fontSize: "11px" }}
-                  onClick={() => showLocationChart(skillSearchResults.skill)}>
-                  <Icon n="pie_chart" size={12} />By Location
-                </button>
-              </div>
-            )}
-          </div>
-          <div style={{ marginTop: "10px", display: "flex", gap: "7px", flexWrap: "wrap" }}>
-            {["Python", "Project Management", "NGO", "Fundraising", "Data Analysis", "Excel", "Communications"].map(s => (
-              <button key={s} onClick={() => { setSkillFilter(s); searchBySkill(s); }}
-                style={{ padding: "3px 10px", borderRadius: "20px", border: `1px solid ${C.border}`, cursor: "pointer", fontSize: "11px", fontWeight: "600",
-                  backgroundColor: skillFilter === s ? C.primaryDim : "transparent",
-                  color: skillFilter === s ? C.primary : C.muted, fontFamily: fontB }}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={S.card}>
-          <div style={{ fontSize: "11px", fontWeight: "700", color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "14px", fontFamily: fontH, display: "flex", alignItems: "center", gap: "6px" }}>
-            <Icon n="leaderboard" size={13} color={C.primary} />Team Activity (all time)
-          </div>
-          <table style={S.table}>
-            <thead><tr>{["User", "Role", "Uploads", "Profile Views", "Logins", "Last Active"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {userActivity.map((u, i) => (
-                <tr key={i} className="log-row">
-                  <td style={S.td}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ width: "28px", height: "28px", borderRadius: "50%", backgroundColor: C.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: C.primary, fontFamily: fontH }}>
-                        {u.username.slice(0, 2).toUpperCase()}
-                      </div>
-                      <span style={{ fontWeight: "600", fontSize: "13px" }}>{u.username}</span>
-                    </div>
-                  </td>
-                  <td style={S.td}><span style={S.badge(users.find(x => x.username === u.username)?.role === "admin" ? "admin" : "")}>{users.find(x => x.username === u.username)?.role || "user"}</span></td>
-                  <td style={{ ...S.td, fontFamily: font, fontWeight: "700", color: C.primary }}>{u.uploads}</td>
-                  <td style={{ ...S.td, fontFamily: font, color: C.info, fontWeight: "600" }}>{u.views}</td>
-                  <td style={{ ...S.td, fontFamily: font, color: C.muted }}>{u.logins}</td>
-                  <td style={{ ...S.td, fontSize: "12px", color: C.muted }}>{u.lastSeen ? fmtDateTime(u.lastSeen) : "Never"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-
-    if (section === "users") return (
-      <>
-        <div style={isMobile ? S.cardMobile : S.card}>
-          <div style={{ fontSize: "14px", fontWeight: "700", marginBottom: "14px", display: "flex", alignItems: "center", gap: "7px", fontFamily: fontH }}>
-            <Icon n="person_add" size={17} color={C.primary} />Add New User
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr 1fr auto", gap: "12px", alignItems: "start" }}>
-            <div><label style={S.label}>Username</label><input style={S.input} type="text" placeholder="username" value={newUser.username} onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))} /></div>
-            <div><label style={S.label}>Email</label><input style={S.input} type="email" placeholder="user@atrios.in" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} /></div>
-            <div><label style={S.label}>Password</label><PasswordInput value={newUser.password} placeholder="Strong password" showStrength={true} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} /></div>
-            <div><label style={S.label}>Role</label><select style={S.select} value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}><option value="user">User</option><option value="admin">Admin</option></select></div>
-            <div style={{ paddingTop: isMobile ? 0 : "22px" }}>
-              <button style={{ ...S.btn("success"), width: isMobile ? "100%" : "auto", justifyContent: "center", padding: "10px 18px" }} onClick={createUser} disabled={!pwValid(newUser.password)}><Icon n="person_add" size={14} />Create</button>
-            </div>
-          </div>
-          {msg && <div style={{ marginTop: "10px", fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", color: msg === "User created" ? C.success : C.error }}>
-            <Icon n={msg === "User created" ? "check_circle" : "error"} size={14} color={msg === "User created" ? C.success : C.error} />{msg}
-          </div>}
-        </div>
-        <div style={isMobile ? {} : S.card}>
-          {isMobile ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {users.map((u, i) => (
-                <div key={i} style={S.cardMobile}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <div>
-                      <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>{u.username}</div>
-                      <div style={{ fontSize: "12px", color: C.muted }}>{u.email}</div>
-                    </div>
-                    <span style={S.badge(u.role === "admin" ? "admin" : "")}>{u.role}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: "8px", paddingTop: "8px", borderTop: `1px solid ${C.border}` }}>
-                    <button style={S.btn("outline", true)} onClick={() => setResetTarget(u)}><Icon n="key" size={13} />Reset PW</button>
-                    <button style={S.btn("danger", true)} onClick={() => deleteUser(u.id)}><Icon n="delete" size={13} /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <table style={S.table}>
-              <thead><tr>{["Username", "Email", "Role", "Status", "Last Login", "Actions"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {users.map((u, i) => (
-                  <tr key={i} className="log-row">
-                    <td style={{ ...S.td, fontFamily: font, fontWeight: "600" }}>{u.username}</td>
-                    <td style={{ ...S.td, fontSize: "13px", color: C.textMid }}>{u.email}</td>
-                    <td style={S.td}><span style={S.badge(u.role === "admin" ? "admin" : "")}>{u.role}</span></td>
-                    <td style={S.td}><span style={S.badge(u.is_active ? "success" : "error")}>{u.is_active ? "Active" : "Inactive"}</span></td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.muted }}>{u.last_login ? new Date(u.last_login).toLocaleString() : "Never"}</td>
-                    <td style={S.td}><div style={S.row}>
-                      <button style={S.btn("outline", true)} onClick={() => setResetTarget(u)}><Icon n="key" size={13} />Reset PW</button>
-                      <button style={S.btn("danger", true)} onClick={() => deleteUser(u.id)}><Icon n="delete" size={13} />Delete</button>
-                    </div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </>
-    );
-
-    if (section === "logs") return (
-      <div style={S.card}>
-        <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "7px", fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>
-            <Icon n="history" size={17} color={C.primary} />Audit Logs
-            <span style={{ fontSize: "12px", fontWeight: "500", color: C.muted, fontFamily: font }}>({filteredLogs.length} entries)</span>
-          </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <div style={{ position: "relative" }}>
-              <select style={{ ...S.select, width: "auto", paddingLeft: "32px", fontSize: "12px" }}
-                value={logUserFilter} onChange={e => { setLogUserFilter(e.target.value); setLogPage(1); }}>
-                <option value="all">All users</option>
-                {uniqueLogUsers.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-              <Icon n="person" size={13} color={C.muted} style={{ position: "absolute", left: "9px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
-            </div>
-            <div style={{ position: "relative" }}>
-              <select style={{ ...S.select, width: "auto", paddingLeft: "32px", fontSize: "12px" }}
-                value={logActionFilter} onChange={e => { setLogActionFilter(e.target.value); setLogPage(1); }}>
-                <option value="all">All actions</option>
-                {uniqueLogActions.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-              <Icon n="filter_list" size={13} color={C.muted} style={{ position: "absolute", left: "9px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
-            </div>
-            {(logUserFilter !== "all" || logActionFilter !== "all") && (
-              <button style={S.btn("outline", true)} onClick={() => { setLogUserFilter("all"); setLogActionFilter("all"); setLogPage(1); }}>
-                <Icon n="close" size={12} />Clear
-              </button>
-            )}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap" }}>
-          {Object.entries(filteredLogs.reduce((acc, l) => { acc[l.action] = (acc[l.action] || 0) + 1; return acc; }, {}))
-            .sort((a,b) => b[1] - a[1]).slice(0, 5).map(([action, count]) => (
-              <span key={action} style={{ ...S.badge(actionBadgeType(action)), cursor: "pointer" }}
-                onClick={() => { setLogActionFilter(action); setLogPage(1); }}>
-                {action}: {count}
-              </span>
-            ))}
-        </div>
-        {isMobile ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {pagedLogs.map((l, i) => (
-              <div key={i} style={{ padding: "10px", backgroundColor: C.surface, borderRadius: "8px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                  <span style={{ fontFamily: font, fontSize: "12px", fontWeight: "600" }}>{l.username}</span>
-                  <span style={S.badge(actionBadgeType(l.action))}>{l.action}</span>
-                </div>
-                <div style={{ fontSize: "11px", color: C.muted }}>{new Date(l.created_at).toLocaleString()}</div>
-                {l.detail && <div style={{ fontSize: "12px", color: C.textMid, marginTop: "3px" }}>{l.detail}</div>}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <table style={S.table}>
-            <thead><tr>{["Time", "User", "Action", "Detail"].map(h => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {pagedLogs.map((l, i) => (
-                <tr key={i} className="log-row">
-                  <td style={{ ...S.td, fontSize: "11px", fontFamily: font, color: C.muted, whiteSpace: "nowrap" }}>{new Date(l.created_at).toLocaleString()}</td>
-                  <td style={{ ...S.td, fontFamily: font, fontSize: "12px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
-                      <div style={{ width: "24px", height: "24px", borderRadius: "50%", backgroundColor: C.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: "700", color: C.primary, fontFamily: fontH, flexShrink: 0 }}>
-                        {l.username?.slice(0, 2).toUpperCase()}
-                      </div>
-                      <span style={{ fontWeight: "600" }}>{l.username}</span>
-                    </div>
-                  </td>
-                  <td style={S.td}><span style={S.badge(actionBadgeType(l.action))}>{l.action}</span></td>
-                  <td style={{ ...S.td, fontSize: "12px", color: C.muted, maxWidth: "400px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.detail || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ display: "flex", gap: "6px", alignItems: "center", justifyContent: "space-between", paddingTop: "14px", borderTop: `1px solid ${C.border}`, marginTop: "4px", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "12px", color: C.muted }}>
-            Showing <strong>{((logPage - 1) * LOG_PAGE_SIZE) + 1}–{Math.min(logPage * LOG_PAGE_SIZE, filteredLogs.length)}</strong> of <strong>{filteredLogs.length}</strong>
-          </span>
-          <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
-            <button style={{ ...S.btn("outline", true), opacity: logPage <= 1 ? 0.4 : 1 }} disabled={logPage <= 1} onClick={() => setLogPage(1)}><Icon n="first_page" size={14} /></button>
-            <button style={{ ...S.btn("outline", true), opacity: logPage <= 1 ? 0.4 : 1 }} disabled={logPage <= 1} onClick={() => setLogPage(p => p - 1)}><Icon n="chevron_left" size={14} />Prev</button>
-            {Array.from({ length: Math.min(5, logTotalPages) }, (_, i) => {
-              const p = Math.max(1, Math.min(logPage - 2, logTotalPages - 4)) + i;
-              return p <= logTotalPages ? <button key={p} style={{ ...S.btn(p === logPage ? "primary" : "outline", true), minWidth: "34px", justifyContent: "center" }} onClick={() => setLogPage(p)}>{p}</button> : null;
-            })}
-            <button style={{ ...S.btn("outline", true), opacity: logPage >= logTotalPages ? 0.4 : 1 }} disabled={logPage >= logTotalPages} onClick={() => setLogPage(p => p + 1)}>Next<Icon n="chevron_right" size={14} /></button>
-            <button style={{ ...S.btn("outline", true), opacity: logPage >= logTotalPages ? 0.4 : 1 }} disabled={logPage >= logTotalPages} onClick={() => setLogPage(logTotalPages)}><Icon n="last_page" size={14} /></button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 }
 
 // ─── APPLY PAGE (public, no auth) ────────────────────────────────────────────
@@ -3145,17 +4631,22 @@ function CreateProjectModal({ onCreated, onCancel }) {
   const isMobile = useIsMobile();
 
   const [form, setForm] = useState({
-    title: "", jd_text: "", company_type: "", client_note: "",
+    title: "",
+    jd_text: "",
+    company_type: "",
+    client_note: "",
+    client_id: "",
   });
-  const [parsing,    setParsing]    = useState(false);   // preview call in flight
-  const [confirming, setConfirming] = useState(false);   // create call in flight
-  const [error,      setError]      = useState("");
-  const [guideOpen,  setGuideOpen]  = useState(false);
-  const [preview,    setPreview]    = useState(null);    // parsed data, no DB write yet
+  const [parsing, setParsing] = useState(false);     // preview call in flight
+  const [confirming, setConfirming] = useState(false); // create call in flight
+  const [error, setError] = useState("");
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [preview, setPreview] = useState(null);     // parsed data, no DB write yet
 
-  const [sectors,      setSectors]      = useState([]);
-  const [sectorMap,    setSectorMap]    = useState({});
+  const [sectors, setSectors] = useState([]);
+  const [sectorMap, setSectorMap] = useState({});
   const [sectorLabels, setSectorLabels] = useState({});
+  const [clients, setClients] = useState([]);
 
   useEffect(() => {
     apiFetch("/api/v1/sectors")
@@ -3164,30 +4655,57 @@ function CreateProjectModal({ onCreated, onCancel }) {
         const list = d.sectors || [];
         setSectors(list);
         const map = {}, labels = {};
-        list.forEach(s => { map[s.value] = true; labels[s.value] = s.label; });
+        list.forEach(s => {
+          map[s.value] = true;
+          labels[s.value] = s.label;
+        });
         setSectorMap(map);
         setSectorLabels(labels);
       })
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    apiFetch("/api/v1/admin/clients/simple")
+      .then(r => r.json())
+      .then(d => setClients(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
+
   // Step 1 — call /preview, NO DB write, show review modal
   const handlePreview = async () => {
-    if (!form.title.trim())                    { setError("Project title is required."); return; }
-    if (form.jd_text.trim().length < 50)       { setError("Please paste the full job description (at least 50 characters)."); return; }
-    setParsing(true); setError("");
+    if (!form.client_id) {
+      setError("Please select a client for this project.");
+      return;
+    }
+    if (!form.title.trim()) {
+      setError("Project title is required.");
+      return;
+    }
+    if (form.jd_text.trim().length < 50) {
+      setError("Please paste the full job description (at least 50 characters).");
+      return;
+    }
+
+    setParsing(true);
+    setError("");
+
     try {
       const r = await apiFetch("/api/v1/projects/preview", {
         method: "POST",
         body: JSON.stringify({
-          title:        form.title.trim(),
-          jd_text:      form.jd_text.trim(),
+          title: form.title.trim(),
+          jd_text: form.jd_text.trim(),
           company_type: form.company_type || null,
-          client_note:  form.client_note.trim() || null,
+          client_note: form.client_note.trim() || null,
         }),
       });
       const d = await r.json();
-      if (!r.ok) { setError(d.detail || "Failed to parse JD."); setParsing(false); return; }
+      if (!r.ok) {
+        setError(d.detail || "Failed to parse JD.");
+        setParsing(false);
+        return;
+      }
       setPreview(d);
     } catch {
       setError("Network error.");
@@ -3198,19 +4716,26 @@ function CreateProjectModal({ onCreated, onCancel }) {
 
   // Step 2a — recruiter happy → POST /projects (creates project exactly once)
   const handleConfirm = async () => {
-    setConfirming(true); setError("");
+    setConfirming(true);
+    setError("");
+
     try {
       const r = await apiFetch("/api/v1/projects", {
         method: "POST",
         body: JSON.stringify({
-          title:        form.title.trim(),
-          jd_text:      form.jd_text.trim(),
+          title: form.title.trim(),
+          jd_text: form.jd_text.trim(),
           company_type: form.company_type || null,
-          client_note:  form.client_note.trim() || null,
+          client_note: form.client_note.trim() || null,
+          client_id: form.client_id ? parseInt(form.client_id, 10) : null,
         }),
       });
       const d = await r.json();
-      if (!r.ok) { setError(d.detail || "Failed to create project."); setConfirming(false); return; }
+      if (!r.ok) {
+        setError(d.detail || "Failed to create project.");
+        setConfirming(false);
+        return;
+      }
       onCreated(d);
     } catch {
       setError("Network error.");
@@ -3235,7 +4760,8 @@ function CreateProjectModal({ onCreated, onCancel }) {
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
           <button style={S.btn("outline", true)} onClick={onCancel} disabled={parsing}>
-            <Icon n="arrow_back" size={14} />Back
+            <Icon n="arrow_back" size={14} />
+            Back
           </button>
         </div>
 
@@ -3243,10 +4769,57 @@ function CreateProjectModal({ onCreated, onCancel }) {
           <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
 
             <div>
+              <label style={S.label}>
+                Client *
+                <span
+                  style={{
+                    fontWeight: "400",
+                    color: C.muted,
+                    textTransform: "none",
+                    letterSpacing: 0,
+                  }}
+                >
+                  {" "}(which company is this mandate for?)
+                </span>
+              </label>
+              <select
+                style={S.select}
+                value={form.client_id}
+                onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))}
+              >
+                <option value="">— Select client —</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+
+              {clients.length === 0 && (
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: C.warning,
+                    marginTop: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "5px",
+                  }}
+                >
+                  <Icon n="warning" size={12} color={C.warning} />
+                  No clients found — create one in Admin → Clients first
+                </div>
+              )}
+            </div>
+
+            <div>
               <label style={S.label}>Project Title *</label>
-              <input style={ta} placeholder="e.g. Senior PM — FinTech · HDFC"
+              <input
+                style={ta}
+                placeholder="e.g. Senior PM — FinTech · HDFC"
                 value={form.title}
-                onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+                onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              />
             </div>
 
             <div>
@@ -3256,26 +4829,44 @@ function CreateProjectModal({ onCreated, onCancel }) {
                   {" "}(recommended — improves domain matching)
                 </span>
               </label>
-              <select style={S.select} value={form.company_type}
-                onChange={e => setForm(f => ({ ...f, company_type: e.target.value }))}>
+              <select
+                style={S.select}
+                value={form.company_type}
+                onChange={e => setForm(f => ({ ...f, company_type: e.target.value }))}
+              >
                 <option value="">— Let AI infer from JD —</option>
                 {sectors.map(s => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
                 ))}
               </select>
               <div style={{ fontSize: "11px", color: C.muted, marginTop: "4px" }}>
                 Explicit selection overrides AI inference. Correct later via{" "}
-                <code style={{ backgroundColor: C.primaryDim, color: C.primary,
-                  padding: "1px 5px", borderRadius: "4px", fontFamily: font,
-                  fontSize: "10px" }}>#company_type:value</code> in the client note.
+                <code
+                  style={{
+                    backgroundColor: C.primaryDim,
+                    color: C.primary,
+                    padding: "1px 5px",
+                    borderRadius: "4px",
+                    fontFamily: font,
+                    fontSize: "10px",
+                  }}
+                >
+                  #company_type:value
+                </code>{" "}
+                in the client note.
               </div>
             </div>
 
             <div>
               <label style={S.label}>Job Description *</label>
-              <textarea style={{ ...ta, height: "220px" }} placeholder="Paste the full JD here…"
+              <textarea
+                style={{ ...ta, height: "220px" }}
+                placeholder="Paste the full JD here…"
                 value={form.jd_text}
-                onChange={e => setForm(f => ({ ...f, jd_text: e.target.value }))} />
+                onChange={e => setForm(f => ({ ...f, jd_text: e.target.value }))}
+              />
             </div>
 
             <div>
@@ -3285,27 +4876,57 @@ function CreateProjectModal({ onCreated, onCancel }) {
                   {" "}(optional, internal only)
                 </span>
               </label>
-              <textarea style={{ ...ta, height: "90px" }}
-                placeholder={"Context, deal-breakers, preferences.\nUse # to override: #min_exp:3  #max_exp:8  #fundraising  #company_type:ngo"}
+              <textarea
+                style={{ ...ta, height: "90px" }}
+                placeholder={
+                  "Context, deal-breakers, preferences.\nUse # to override: #min_exp:3  #max_exp:8  #fundraising  #company_type:ngo"
+                }
                 value={form.client_note}
-                onChange={e => setForm(f => ({ ...f, client_note: e.target.value }))} />
+                onChange={e => setForm(f => ({ ...f, client_note: e.target.value }))}
+              />
 
-              <LiveHashtagPreview note={form.client_note} sectorMap={sectorMap} sectorLabels={sectorLabels} />
+              <LiveHashtagPreview
+                note={form.client_note}
+                sectorMap={sectorMap}
+                sectorLabels={sectorLabels}
+              />
 
               <div style={{ fontSize: "11px", color: C.muted, marginTop: "6px" }}>
                 Never shown to candidates · Use{" "}
-                <code style={{ backgroundColor: C.primaryDim, color: C.primary,
-                  padding: "1px 5px", borderRadius: "4px", fontFamily: font,
-                  fontSize: "10px" }}>#</code>{" "}
+                <code
+                  style={{
+                    backgroundColor: C.primaryDim,
+                    color: C.primary,
+                    padding: "1px 5px",
+                    borderRadius: "4px",
+                    fontFamily: font,
+                    fontSize: "10px",
+                  }}
+                >
+                  #
+                </code>{" "}
                 overrides to correct AI extraction after reviewing
               </div>
 
-              <InlineGuide expanded={guideOpen} onToggle={() => setGuideOpen(o => !o)} sectors={sectors} />
+              <InlineGuide
+                expanded={guideOpen}
+                onToggle={() => setGuideOpen(o => !o)}
+                sectors={sectors}
+              />
             </div>
 
             {error && (
-              <div style={{ background: C.errorLight, borderRadius: "8px",
-                padding: "10px 14px", fontSize: "13px", color: C.error }}>{error}</div>
+              <div
+                style={{
+                  background: C.errorLight,
+                  borderRadius: "8px",
+                  padding: "10px 14px",
+                  fontSize: "13px",
+                  color: C.error,
+                }}
+              >
+                {error}
+              </div>
             )}
 
             {parsing && (
@@ -3318,9 +4939,14 @@ function CreateProjectModal({ onCreated, onCancel }) {
             )}
 
             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-              <button style={S.btn("outline")} onClick={onCancel} disabled={parsing}>Cancel</button>
-              <button style={{ ...S.btn("primary"), opacity: parsing ? 0.6 : 1 }}
-                onClick={handlePreview} disabled={parsing}>
+              <button style={S.btn("outline")} onClick={onCancel} disabled={parsing}>
+                Cancel
+              </button>
+              <button
+                style={{ ...S.btn("primary"), opacity: parsing ? 0.6 : 1 }}
+                onClick={handlePreview}
+                disabled={parsing}
+              >
                 <Icon n="manage_search" size={15} />
                 {parsing ? "Parsing…" : "Parse & Review"}
               </button>
@@ -3344,7 +4970,6 @@ function CreateProjectModal({ onCreated, onCancel }) {
     </>
   );
 }
-
 // ─── PROJECT PARSE REVIEW MODAL ──────────────────────────────────────────────
 //
 // Shown after POST /api/v1/projects returns parsed data.
@@ -5487,6 +7112,549 @@ function ReportPrintView() {
   );
 }
 
+// ─── CLIENT PORTAL ────────────────────────────────────────────────────────────
+
+// Expiry state helper — returns one of: 'ok' | 'warning' | 'grace' | 'expired'
+function getExpiryState(access_until, days_until_expiry) {
+  if (!access_until) return "ok";
+  if (days_until_expiry === null || days_until_expiry === undefined) return "ok";
+  if (days_until_expiry > 14) return "ok";
+  if (days_until_expiry > 0)  return "warning";   // 1–14 days left
+  if (days_until_expiry >= -7) return "grace";    // 0 to -7 days (grace window)
+  return "expired";                                // beyond grace → hard block
+}
+
+// Warning banner — shown when 1–14 days until expiry
+function ClientExpiryBanner({ daysLeft, onDismiss }) {
+  const WARNING_KEY = `client_warning_dismissed_${new Date().toISOString().slice(0, 10)}`;
+  const [visible, setVisible] = useState(() => !localStorage.getItem(WARNING_KEY));
+
+  const dismiss = () => {
+    localStorage.setItem(WARNING_KEY, "1");
+    setVisible(false);
+    onDismiss?.();
+  };
+
+  if (!visible) return null;
+
+  return (
+    <div style={{
+      backgroundColor: C.warningLight,
+      border: `1px solid rgba(217,119,6,0.3)`,
+      borderRadius: "10px",
+      padding: "11px 16px",
+      margin: "0 0 16px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      fontSize: "13px",
+      color: "#92400E",
+    }}>
+      <Icon n="schedule" size={17} color={C.warning} />
+      <span style={{ flex: 1 }}>
+        Your access to this portal expires in{" "}
+        <strong>{daysLeft} day{daysLeft !== 1 ? "s" : ""}</strong>.
+        Please contact ATRIOS to renew your contract.
+      </span>
+      <button onClick={dismiss}
+        style={{ background: "none", border: "none", cursor: "pointer",
+          color: C.warning, padding: "2px", display: "flex", alignItems: "center" }}>
+        <Icon n="close" size={16} />
+      </button>
+    </div>
+  );
+}
+
+// Grace-period modal — shown when access_until has passed but within +7 days
+// No close button — cannot be dismissed
+function ClientExpiredModal() {
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      backgroundColor: "rgba(15,15,45,0.75)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 2000, padding: "16px",
+      backdropFilter: "blur(8px)",
+    }}>
+      <div style={{
+        backgroundColor: C.white, borderRadius: "20px", maxWidth: "420px", width: "100%",
+        padding: "36px 32px", textAlign: "center",
+        boxShadow: "0 32px 80px rgba(0,0,0,0.18)",
+      }}>
+        <div style={{
+          width: "56px", height: "56px", borderRadius: "50%",
+          backgroundColor: C.warningLight,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 18px",
+        }}>
+          <Icon n="lock_clock" size={28} color={C.warning} />
+        </div>
+        <div style={{ fontSize: "18px", fontWeight: "700", fontFamily: fontH,
+          color: C.text, marginBottom: "10px" }}>
+          Your Access Has Expired
+        </div>
+        <div style={{ fontSize: "14px", color: C.muted, lineHeight: "1.7", marginBottom: "20px" }}>
+          Your access to the ATRIOS Talint portal has expired.
+          Please contact your ATRIOS account manager to renew your contract.
+        </div>
+        <a href="mailto:admin@atrios.in"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "7px",
+            padding: "10px 22px", borderRadius: "10px",
+            backgroundColor: C.primary, color: "#fff",
+            fontWeight: "600", fontSize: "13px", textDecoration: "none",
+            fontFamily: fontB,
+          }}>
+          <Icon n="mail" size={15} />admin@atrios.in
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// Hard expired screen — shown when server returns CLIENT_ACCESS_EXPIRED (after +7 days)
+function ClientHardExpiredScreen() {
+  return (
+    <div style={{
+      minHeight: "100vh", backgroundColor: C.bg,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
+    }}>
+      <div style={{ textAlign: "center", maxWidth: "380px" }}>
+        <div style={{
+          width: "64px", height: "64px", borderRadius: "50%",
+          backgroundColor: C.errorLight,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 20px",
+        }}>
+          <Icon n="lock" size={30} color={C.error} />
+        </div>
+        <div style={{ fontSize: "20px", fontWeight: "700", fontFamily: fontH,
+          color: C.text, marginBottom: "10px" }}>
+          Portal Access Ended
+        </div>
+        <div style={{ fontSize: "14px", color: C.muted, lineHeight: "1.7", marginBottom: "24px" }}>
+          Your portal access has ended. Please reach out to your ATRIOS contact to continue.
+        </div>
+        <a href="mailto:admin@atrios.in"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "7px",
+            padding: "10px 22px", borderRadius: "10px",
+            backgroundColor: C.primary, color: "#fff",
+            fontWeight: "600", fontSize: "13px", textDecoration: "none",
+          }}>
+          <Icon n="mail" size={15} />Contact ATRIOS
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// Project card — client view
+function ClientProjectCard({ project, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        backgroundColor: C.white, borderRadius: "14px",
+        border: `1px solid ${C.borderMid}`,
+        padding: "20px 22px", cursor: "pointer",
+        boxShadow: "0 1px 4px rgba(98,100,244,0.04)",
+        transition: "box-shadow 0.15s, transform 0.15s",
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.boxShadow = "0 6px 20px rgba(98,100,244,0.10)";
+        e.currentTarget.style.transform = "translateY(-2px)";
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.boxShadow = "0 1px 4px rgba(98,100,244,0.04)";
+        e.currentTarget.style.transform = "";
+      }}
+    >
+      <div style={{ fontFamily: fontH, fontSize: "15px", fontWeight: "700",
+        color: C.text, marginBottom: "10px" }}>
+        {project.title}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
+        <span style={{ fontSize: "12px", color: C.muted }}>
+          {project.visible_candidate_count} applicant{project.visible_candidate_count !== 1 ? "s" : ""}
+        </span>
+        {project.apply_enabled
+          ? <span style={S.badge("info")}>Applications Open</span>
+          : <span style={S.badge("")}>Closed</span>
+        }
+      </div>
+      <div style={{ fontSize: "11px", color: C.muted }}>
+        Created {fmtDate(project.created_at)}
+      </div>
+    </div>
+  );
+}
+
+// Client projects list page
+function ClientProjectsPage({ onSelectProject }) {
+  const isMobile = useIsMobile();
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/api/v1/client/projects")
+      .then(r => r.json())
+      .then(d => setProjects(Array.isArray(d) ? d : []))
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div style={{ textAlign: "center", padding: "60px", color: C.muted }}>
+      <div style={{ width: "28px", height: "28px", border: `3px solid ${C.primary}`,
+        borderTopColor: "transparent", borderRadius: "50%",
+        animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
+      Loading your mandates…
+    </div>
+  );
+
+  if (projects.length === 0) return (
+    <div style={{ textAlign: "center", padding: "72px 0", color: C.muted }}>
+      <Icon n="work_off" size={44} color={C.border} style={{ display: "block", margin: "0 auto 14px" }} />
+      <div style={{ fontSize: "15px", fontWeight: "600", fontFamily: fontH }}>No active mandates</div>
+      <div style={{ fontSize: "13px", marginTop: "6px" }}>Contact your ATRIOS account manager to get started.</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={S.pageTitle}>Your Mandates</div>
+      <div style={{ ...S.pageSub, marginBottom: "24px" }}>
+        Click a mandate to view applicants
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))",
+        gap: "16px",
+      }}>
+        {projects.map(p => (
+          <ClientProjectCard key={p.id} project={p} onClick={() => onSelectProject(p)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Score pill for client view — simpler, no sub-scores shown
+function ClientScorePill({ score }) {
+  if (score == null) return <span style={{ fontSize: "13px", color: C.muted }}>—</span>;
+  const pct = Math.round(score * 100);
+  const color = score >= 0.7 ? C.success : score >= 0.5 ? C.warning : C.error;
+  const bg    = score >= 0.7 ? C.successLight : score >= 0.5 ? C.warningLight : C.errorLight;
+  return (
+    <span style={{
+      backgroundColor: bg, color, padding: "3px 10px",
+      borderRadius: "20px", fontSize: "13px", fontWeight: "700",
+    }}>
+      {pct}%
+    </span>
+  );
+}
+
+// Source badge for client — friendly labels
+function clientSourceBadge(source) {
+  if (source === "apply_link")     return { label: "Applied",  type: "success" };
+  if (source === "apply_link_add") return { label: "Promoted", type: "warning" };
+  return                                  { label: "Uploaded", type: ""        };
+}
+
+// Client project detail page — candidate table
+function ClientProjectDetailPage({ project, onBack }) {
+  const isMobile = useIsMobile();
+  const [detail,     setDetail]     = useState(null);
+  const [candidates, setCandidates] = useState([]);
+  const [loading,    setLoading]    = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch(`/api/v1/client/projects/${project.id}`).then(r => r.json()),
+      apiFetch(`/api/v1/client/projects/${project.id}/candidates`).then(r => r.json()),
+    ])
+      .then(([d, c]) => {
+        setDetail(d);
+        setCandidates(Array.isArray(c) ? c : []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [project.id]);
+
+  if (loading) return (
+    <div style={{ textAlign: "center", padding: "60px", color: C.muted }}>
+      <div style={{ width: "28px", height: "28px", border: `3px solid ${C.primary}`,
+        borderTopColor: "transparent", borderRadius: "50%",
+        animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
+      Loading applicants…
+    </div>
+  );
+
+  const expRange = detail
+    ? [detail.min_experience, detail.max_experience].filter(v => v != null).join("–") + (detail.min_experience != null ? " yrs" : "")
+    : "";
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "20px" }}>
+        <button style={{ ...S.btn("outline", true), marginTop: "2px" }} onClick={onBack}>
+          <Icon n="arrow_back" size={14} />Back
+        </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ ...S.pageTitle, marginBottom: "4px" }}>{project.title}</div>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            {detail?.location && (
+              <span style={{ fontSize: "12px", color: C.muted, display: "flex", alignItems: "center", gap: "4px" }}>
+                <Icon n="location_on" size={13} />{detail.location}
+              </span>
+            )}
+            {expRange && (
+              <span style={{ fontSize: "12px", color: C.muted, display: "flex", alignItems: "center", gap: "4px" }}>
+                <Icon n="work_history" size={13} />{expRange}
+              </span>
+            )}
+            {detail?.apply_enabled
+              ? <span style={S.badge("info")}>Applications Open</span>
+              : <span style={S.badge("")}>Applications Closed</span>
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* JD summary */}
+      {detail?.jd_public_summary && (
+        <div style={{ ...S.card, marginBottom: "20px",
+          backgroundColor: C.primaryDim, border: `1px solid rgba(98,100,244,0.15)` }}>
+          <div style={{ fontSize: "10px", fontWeight: "700", color: C.primary,
+            textTransform: "uppercase", letterSpacing: "0.1em",
+            marginBottom: "8px", fontFamily: fontH }}>Role Description</div>
+          <div style={{ fontSize: "13px", color: C.textMid, lineHeight: "1.7" }}>
+            {detail.jd_public_summary}
+          </div>
+        </div>
+      )}
+
+      {/* Count */}
+      <div style={{ fontSize: "13px", color: C.muted, marginBottom: "12px" }}>
+        {candidates.length} applicant{candidates.length !== 1 ? "s" : ""}
+      </div>
+
+      {/* No candidates */}
+      {candidates.length === 0 && (
+        <div style={{ textAlign: "center", padding: "48px 0", color: C.muted }}>
+          <Icon n="people" size={40} color={C.border} style={{ display: "block", margin: "0 auto 12px" }} />
+          No applicants yet. Check back after the apply link has been shared.
+        </div>
+      )}
+
+      {/* Mobile cards */}
+      {candidates.length > 0 && isMobile && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {candidates.map(c => {
+            const badge = clientSourceBadge(c.source);
+            return (
+              <div key={c.candidate_id} style={S.cardMobile}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>{c.name || "—"}</div>
+                    <div style={{ fontSize: "12px", color: C.muted }}>
+                      {[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}
+                    </div>
+                  </div>
+                  <ClientScorePill score={c.match_score} />
+                </div>
+                <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                  {c.total_experience != null && (
+                    <span style={{ fontSize: "12px", color: C.muted }}>{c.total_experience}y exp</span>
+                  )}
+                  {c.location && (
+                    <span style={{ fontSize: "12px", color: C.muted }}>{c.location}</span>
+                  )}
+                  <span style={S.badge(badge.type)}>{badge.label}</span>
+                  {c.cv_storage_url && (
+                    <a href={c.cv_storage_url} target="_blank" rel="noreferrer"
+                      style={{ ...S.btn("outline", true), fontSize: "11px", textDecoration: "none" }}>
+                      <Icon n="open_in_new" size={12} />View CV
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Desktop table */}
+      {candidates.length > 0 && !isMobile && (
+        <div style={{ backgroundColor: C.white, borderRadius: "14px",
+          border: `1px solid ${C.border}`, overflow: "hidden" }}>
+          <table style={S.table}>
+            <thead>
+              <tr>
+                {["Score", "Name", "Designation", "Company", "Exp", "Location", "Source", "CV"].map(h => (
+                  <th key={h} style={S.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {candidates.map(c => {
+                const badge = clientSourceBadge(c.source);
+                return (
+                  <tr key={c.candidate_id}
+                    onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>
+                    <td style={{ ...S.td, width: "70px", textAlign: "center" }}>
+                      <ClientScorePill score={c.match_score} />
+                    </td>
+                    <td style={{ ...S.td, maxWidth: "160px" }}>
+                      <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "13px",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {c.name || "—"}
+                      </div>
+                    </td>
+                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid,
+                      maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.current_designation || "—"}
+                    </td>
+                    <td style={{ ...S.td, fontSize: "12px", color: C.muted,
+                      maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.current_company || "—"}
+                    </td>
+                    <td style={{ ...S.td, fontFamily: font, fontSize: "12px",
+                      color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
+                      {c.total_experience != null ? `${c.total_experience}y` : "—"}
+                    </td>
+                    <td style={{ ...S.td, fontSize: "12px", color: C.muted,
+                      maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.location || "—"}
+                    </td>
+                    <td style={S.td}>
+                      <span style={S.badge(badge.type)}>{badge.label}</span>
+                    </td>
+                    <td style={S.td}>
+                      {c.cv_storage_url ? (
+                        <a href={c.cv_storage_url} target="_blank" rel="noreferrer"
+                          style={{ ...S.btn("outline", true), textDecoration: "none", fontSize: "11px" }}>
+                          <Icon n="open_in_new" size={12} />View CV
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: "12px", color: C.muted }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Top-level client portal wrapper
+function ClientPortal({ user, onLogout }) {
+  const isMobile = useIsMobile();
+  const [accessMeta,       setAccessMeta]       = useState(null);
+  const [selectedProject,  setSelectedProject]  = useState(null);
+  const [hardExpired,      setHardExpired]       = useState(false);
+
+  useEffect(() => {
+    apiFetch("/api/v1/client/me")
+      .then(r => {
+        if (r.status === 403) { setHardExpired(true); return null; }
+        return r.json();
+      })
+      .then(d => { if (d) setAccessMeta(d); })
+      .catch(() => {});
+  }, []);
+
+  // Hard-expired — full-page screen, nothing else renders
+  if (hardExpired) return <ClientHardExpiredScreen />;
+
+  const expiryState = accessMeta
+    ? getExpiryState(accessMeta.access_until, accessMeta.days_until_expiry)
+    : "ok";
+
+  const initials = user.username.slice(0, 2).toUpperCase();
+  const clientName = accessMeta?.client_name || user.username;
+
+  return (
+    <div style={S.app}>
+      {/* Top bar */}
+      <header style={{
+        ...S.header,
+        display: "flex",
+      }}>
+        <div style={S.logo}>
+          <div style={S.logoIcon}>A</div>
+          <div style={S.logoText}>Talent Intelligence</div>
+        </div>
+
+        {/* Client name centred */}
+        {!isMobile && (
+          <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)",
+            fontSize: "13px", fontWeight: "600", color: C.muted }}>
+            {clientName}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px",
+            padding: "5px 12px 5px 5px", borderRadius: "24px",
+            border: `1px solid ${C.border}`, backgroundColor: C.white }}>
+            <div style={{ width: "27px", height: "27px", borderRadius: "50%",
+              backgroundColor: C.primary, display: "flex", alignItems: "center",
+              justifyContent: "center", color: "#fff", fontWeight: "700",
+              fontSize: "11px", fontFamily: fontH }}>
+              {initials}
+            </div>
+            {!isMobile && (
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: "600", color: C.text, lineHeight: 1.2 }}>
+                  {user.username}
+                </div>
+                <div style={{ fontSize: "10px", color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Client
+                </div>
+              </div>
+            )}
+          </div>
+          <button style={{ ...S.btn("outline", true), color: C.error,
+            borderColor: "rgba(224,92,92,0.25)" }} onClick={onLogout}>
+            <Icon n="logout" size={13} />Sign Out
+          </button>
+        </div>
+      </header>
+
+      {/* Grace period modal — overlays everything but doesn't hard-block yet */}
+      {expiryState === "grace" && <ClientExpiredModal />}
+
+      <main style={isMobile ? S.mainMobile : S.main}>
+        {/* Expiry warning banner */}
+        {expiryState === "warning" && accessMeta && (
+          <ClientExpiryBanner daysLeft={accessMeta.days_until_expiry} />
+        )}
+
+        {selectedProject ? (
+          <ClientProjectDetailPage
+            project={selectedProject}
+            onBack={() => setSelectedProject(null)}
+          />
+        ) : (
+          <ClientProjectsPage onSelectProject={setSelectedProject} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// END OF CLIENT PORTAL BLOCK
+// ─────────────────────────────────────────────────────────────────────────────
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(getUser);
@@ -5519,7 +7687,9 @@ export default function App() {
 
   const handleLogout = () => { clearAuth(); setUser(null); };
   if (!user) return <LoginPage onLogin={setUser} />;
-
+  if (user.role === "client") {
+          return <ClientPortal user={user} onLogout={() => { clearAuth(); setUser(null); }} />;
+     }
   const tabs = [
     { key: "search",    icon: "search",        label: "Search"    },
     { key: "upload",    icon: "upload_file",   label: "Upload"    },
