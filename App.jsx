@@ -7846,6 +7846,7 @@ function ClientPortal({ user, onLogout }) {
   const [accessMeta,      setAccessMeta]      = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [hardExpired,     setHardExpired]      = useState(false);
+  const [showChangePw,    setShowChangePw]     = useState(false);
 
   useEffect(() => {
     apiFetch("/api/v1/client/me")
@@ -7860,8 +7861,8 @@ function ClientPortal({ user, onLogout }) {
     ? getExpiryState(accessMeta.access_until, accessMeta.days_until_expiry)
     : "ok";
 
-  const initials    = user.username.slice(0, 2).toUpperCase();
-  const clientName  = accessMeta?.client_name || user.username;
+  const initials   = user.username.slice(0, 2).toUpperCase();
+  const clientName = accessMeta?.client_name || user.username;
 
   return (
     <div style={S.app}>
@@ -7897,6 +7898,15 @@ function ClientPortal({ user, onLogout }) {
               </div>
             )}
           </div>
+          {/* ── Change Password button ── */}
+          <button
+            style={{ ...S.btn("outline", true) }}
+            onClick={() => setShowChangePw(true)}
+            title="Change Password"
+          >
+            <Icon n="lock" size={13} />
+            {!isMobile && "Change Password"}
+          </button>
           <button style={{ ...S.btn("outline", true), color: C.error,
             borderColor: "rgba(224,92,92,0.25)" }} onClick={onLogout}>
             <Icon n="logout" size={13} />Sign Out
@@ -7905,6 +7915,9 @@ function ClientPortal({ user, onLogout }) {
       </header>
 
       {expiryState === "grace" && <ClientExpiredModal />}
+
+      {/* ── Change Password modal ── */}
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
 
       <main style={isMobile ? S.mainMobile : S.main}>
         {expiryState === "warning" && accessMeta && (
@@ -7922,7 +7935,6 @@ function ClientPortal({ user, onLogout }) {
     </div>
   );
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // END OF CLIENT PORTAL BLOCK
 // ─────────────────────────────────────────────────────────────────────────────
