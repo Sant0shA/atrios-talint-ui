@@ -4030,18 +4030,18 @@ function ProjectsTab({ onViewCandidate }) {
   const isMobile = useIsMobile();
   const [view,           setView]     = useState("list");
   const [projects,       setProjects] = useState([]);
+  const [clients,        setClients]  = useState([]);
   const [selProject,     setSel]      = useState(null);
   const [showArchived,   setShowArc]  = useState(false);
   const [loading,        setLoading]  = useState(false);
+  const [expandedClients, setExpandedClients] = useState(new Set(["all"])); // all expanded by default
   const [editingProject, setEditingProject] = useState(null);
   const [noteVal,        setNoteVal]        = useState("");
   const [noteSaving,     setNoteSaving]     = useState(false);
   const [noteMsg,        setNoteMsg]        = useState("");
-
-  // Kebab menu state — tracks which card's menu is open
-  const [openMenuId, setOpenMenuId] = useState(null);
-  const [archiving,  setArchiving]  = useState(null);  // project id being archived
-
+  const [openMenuId,     setOpenMenuId]     = useState(null);
+  const [archiving,      setArchiving]      = useState(null);
+ 
   const fetchProjects = useCallback(async (archived) => {
     setLoading(true);
     try {
@@ -4050,17 +4050,23 @@ function ProjectsTab({ onViewCandidate }) {
       setProjects(d.projects || []);
     } catch { setProjects([]); } finally { setLoading(false); }
   }, []);
-
+ 
   useEffect(() => { fetchProjects(showArchived); }, [showArchived]);
-
-  // Close kebab menu on outside click
+ 
+  useEffect(() => {
+    apiFetch("/api/v1/admin/clients/simple")
+      .then(r => r.json())
+      .then(d => setClients(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
+ 
   useEffect(() => {
     if (!openMenuId) return;
     const close = () => setOpenMenuId(null);
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [openMenuId]);
-
+ 
   const saveNote = async () => {
     setNoteSaving(true); setNoteMsg("");
     try {
@@ -4076,27 +4082,27 @@ function ProjectsTab({ onViewCandidate }) {
     } catch { setNoteMsg("error"); }
     finally { setNoteSaving(false); }
   };
-
+ 
   const handleArchive = async (e, p) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
-    setArchiving(p.id);
-    try {
-      await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" });
-      fetchProjects(showArchived);
-    } finally { setArchiving(null); }
+    e.stopPropagation(); setOpenMenuId(null); setArchiving(p.id);
+    try { await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" }); fetchProjects(showArchived); }
+    finally { setArchiving(null); }
   };
-
+ 
   const handleUnarchive = async (e, p) => {
-    e.stopPropagation();
-    setOpenMenuId(null);
-    setArchiving(p.id);
-    try {
-      await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" });
-      fetchProjects(showArchived);
-    } finally { setArchiving(null); }
+    e.stopPropagation(); setOpenMenuId(null); setArchiving(p.id);
+    try { await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" }); fetchProjects(showArchived); }
+    finally { setArchiving(null); }
   };
-
+ 
+  const toggleClient = (key) => {
+    setExpandedClients(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+ 
   if (view === "create")
     return <CreateProjectModal
       onCreated={() => { fetchProjects(showArchived); setView("list"); }}
@@ -4106,38 +4112,144 @@ function ProjectsTab({ onViewCandidate }) {
       project={selProject}
       onBack={() => { setView("list"); fetchProjects(showArchived); }}
       onViewCandidate={onViewCandidate} />;
-
+ 
   const scoreColor = s => s >= 0.7 ? C.success : s >= 0.5 ? C.warning : C.error;
-
+ 
+  // ── Group projects by client ────────────────────────────────────────────────
+  const clientMap = {};
+  clients.forEach(c => { clientMap[c.id] = c.name; });
+ 
+  const grouped = {};
+  projects.forEach(p => {
+    const key = p.client_id ? String(p.client_id) : "__none__";
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(p);
+  });
+ 
+  // Build ordered group list: clients with projects first (alphabetical), then unlinked
+  const groupOrder = clients
+    .filter(c => grouped[String(c.id)])
+    .map(c => ({ key: String(c.id), label: c.name, color: C.primary }));
+  if (grouped["__none__"]) {
+    groupOrder.push({ key: "__none__", label: "No Client Linked", color: C.muted });
+  }
+ 
+  // ── Project card ────────────────────────────────────────────────────────────
+  const renderProjectCard = (p) => (
+    <div key={p.id}
+      style={{
+        backgroundColor: C.white, borderRadius: "12px",
+        border: `1px solid ${p.is_archived ? C.border : C.borderMid}`,
+        padding: "16px 18px", cursor: "pointer",
+        opacity: p.is_archived ? 0.65 : 1,
+        boxShadow: "0 1px 4px rgba(98,100,244,0.04)",
+        transition: "box-shadow 0.15s, transform 0.15s",
+        position: "relative",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 6px 20px rgba(98,100,244,0.10)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(98,100,244,0.04)"; e.currentTarget.style.transform = ""; }}
+      onClick={() => { setSel(p); setView("detail"); }}>
+ 
+      {p.archive_prompted && !p.is_archived && (
+        <div style={{ background: C.warningLight, border: `1px solid rgba(217,119,6,0.25)`, borderRadius: "8px", padding: "7px 10px", marginBottom: "10px", fontSize: "11px", color: C.warning }}
+          onClick={e => e.stopPropagation()}>
+          ⏰ Inactive 3 months —
+          <span style={{ marginLeft: "6px", fontWeight: "700", cursor: "pointer", color: C.primary }} onClick={e => handleArchive(e, p)}>Archive</span>
+          <span style={{ marginLeft: "6px", fontWeight: "700", cursor: "pointer", color: C.muted }} onClick={e => { e.stopPropagation(); fetchProjects(showArchived); }}>Keep</span>
+        </div>
+      )}
+ 
+      <div style={{ fontFamily: fontH, fontSize: "14px", fontWeight: "700", color: C.text, marginBottom: "8px", paddingRight: "24px" }}>
+        {p.title}
+      </div>
+ 
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+        <span style={{ fontSize: "11px", color: C.muted }}>{p.candidate_count ?? 0} candidates</span>
+        {p.inbound_count > 0 && <span style={S.badge("success")}>{p.inbound_count} Applied</span>}
+        {p.match_score_range && (
+          <span style={{ fontSize: "11px", color: C.muted }}>
+            Top: <span style={{ color: scoreColor(p.match_score_range.max), fontWeight: "700" }}>
+              {Math.round(p.match_score_range.max * 100)}%
+            </span>
+          </span>
+        )}
+        {p.is_archived && <span style={S.badge("")}>Archived</span>}
+      </div>
+ 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: "11px", color: C.muted }}>{fmtDate(p.last_activity_at || p.created_at)}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+          {!p.is_archived && (
+            <button style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: C.muted, display: "flex", alignItems: "center", borderRadius: "5px" }}
+              title="Edit note"
+              onClick={e => { e.stopPropagation(); setEditingProject(p); setNoteVal(p.client_note || ""); setNoteMsg(""); }}>
+              <Icon n="edit_note" size={15} />
+            </button>
+          )}
+          {p.apply_enabled && !p.is_archived
+            ? <span style={S.badge("info")}>Link On</span>
+            : !p.is_archived && <span style={S.badge("")}>Link Off</span>
+          }
+          <div style={{ position: "relative" }}>
+            <button title="More" onClick={e => { e.stopPropagation(); setOpenMenuId(openMenuId === p.id ? null : p.id); }}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: C.muted, display: "flex", alignItems: "center", borderRadius: "5px", opacity: archiving === p.id ? 0.5 : 1 }}
+              disabled={archiving === p.id}>
+              {archiving === p.id
+                ? <div style={{ width: "13px", height: "13px", border: `2px solid ${C.muted}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+                : <Icon n="more_vert" size={16} />}
+            </button>
+            {openMenuId === p.id && (
+              <div onClick={e => e.stopPropagation()}
+                style={{ position: "absolute", right: 0, bottom: "calc(100% + 4px)", backgroundColor: C.white, border: `1px solid ${C.border}`, borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.10)", minWidth: "150px", zIndex: 200, overflow: "hidden" }}>
+                {!p.is_archived ? (
+                  <button onClick={e => handleArchive(e, p)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: "8px", padding: "9px 13px", background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: C.textMid, fontFamily: fontB, textAlign: "left" }}
+                    onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                    <Icon n="inventory_2" size={14} color={C.muted} />Archive
+                  </button>
+                ) : (
+                  <button onClick={e => handleUnarchive(e, p)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: "8px", padding: "9px 13px", background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: C.textMid, fontFamily: fontB, textAlign: "left" }}
+                    onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
+                    <Icon n="unarchive" size={14} color={C.success} />Unarchive
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+ 
   return (
     <div>
       {!isMobile && (
         <>
           <div style={S.pageTitle}>Projects</div>
-          <div style={S.pageSub}>Manage hiring projects · match candidates · share apply links</div>
+          <div style={S.pageSub}>Grouped by client · click a project to open</div>
         </>
       )}
-
+ 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <label style={{ fontSize: "13px", color: C.muted, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-          <input type="checkbox" checked={showArchived} onChange={e => setShowArc(e.target.checked)}
-            style={{ accentColor: C.primary }} />
+          <input type="checkbox" checked={showArchived} onChange={e => setShowArc(e.target.checked)} style={{ accentColor: C.primary }} />
           Show Archived
         </label>
         <button style={S.btn("primary", true)} onClick={() => setView("create")}>
           <Icon n="add" size={14} />New Project
         </button>
       </div>
-
+ 
       {loading && (
         <div style={{ textAlign: "center", padding: "60px", color: C.muted }}>
-          <div style={{ width: "28px", height: "28px", border: `3px solid ${C.primary}`,
-            borderTopColor: "transparent", borderRadius: "50%",
-            animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
+          <div style={{ width: "28px", height: "28px", border: `3px solid ${C.primary}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
           Loading projects…
         </div>
       )}
-
+ 
       {!loading && projects.length === 0 && (
         <div style={{ textAlign: "center", padding: "72px 0" }}>
           <Icon n="work" size={48} color={C.border} style={{ display: "block", margin: "0 auto 14px" }} />
@@ -4151,225 +4263,92 @@ function ProjectsTab({ onViewCandidate }) {
           )}
         </div>
       )}
-
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(320px, 1fr))",
-        gap: "16px",
-      }}>
-        {projects.map(p => (
-          <div key={p.id}
-            style={{
-              backgroundColor: C.white, borderRadius: "14px",
-              border: `1px solid ${p.is_archived ? C.border : C.borderMid}`,
-              padding: "20px 22px", cursor: "pointer",
-              opacity: p.is_archived ? 0.65 : 1,
-              boxShadow: "0 1px 4px rgba(98,100,244,0.04)",
-              transition: "box-shadow 0.15s, transform 0.15s",
-              position: "relative",   // needed for kebab dropdown positioning
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.boxShadow = "0 6px 20px rgba(98,100,244,0.10)";
-              e.currentTarget.style.transform = "translateY(-2px)";
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.boxShadow = "0 1px 4px rgba(98,100,244,0.04)";
-              e.currentTarget.style.transform = "";
-            }}
-            onClick={() => { setSel(p); setView("detail"); }}>
-
-            {/* Archive-prompted banner */}
-            {p.archive_prompted && !p.is_archived && (
-              <div style={{
-                background: C.warningLight, border: `1px solid rgba(217,119,6,0.25)`,
-                borderRadius: "8px", padding: "8px 12px", marginBottom: "12px",
-                fontSize: "12px", color: C.warning,
-              }}
-                onClick={e => e.stopPropagation()}>
-                ⏰ Inactive for 3 months — Archive it?
-                <span style={{ marginLeft: "8px", fontWeight: "700", cursor: "pointer", color: C.primary }}
-                  onClick={e => handleArchive(e, p)}>Archive</span>
-                <span style={{ marginLeft: "8px", fontWeight: "700", cursor: "pointer", color: C.muted }}
-                  onClick={e => { e.stopPropagation(); fetchProjects(showArchived); }}>Keep Active</span>
-              </div>
-            )}
-
-            {/* Title */}
-            <div style={{ fontFamily: fontH, fontSize: "15px", fontWeight: "700",
-              color: C.text, marginBottom: "10px", paddingRight: "28px" }}>
-              {p.title}
-            </div>
-
-            {/* Meta row */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-              <span style={{ fontSize: "12px", color: C.muted }}>{p.candidate_count ?? 0} candidates</span>
-              {p.inbound_count > 0 && (
-                <span style={S.badge("success")}>{p.inbound_count} Applied</span>
-              )}
-              {p.match_score_range && (
-                <span style={{ fontSize: "12px", color: C.muted }}>
-                  Top: <span style={{ color: scoreColor(p.match_score_range.max), fontWeight: "700" }}>
-                    {Math.round(p.match_score_range.max * 100)}%
-                  </span>
-                </span>
-              )}
-              {p.is_archived && (
-                <span style={S.badge("")}>Archived</span>
-              )}
-            </div>
-
-            {/* Footer row */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "11px", color: C.muted }}>
-                {fmtDate(p.last_activity_at || p.created_at)}
-              </span>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                {/* Edit note button — active projects only */}
-                {!p.is_archived && (
-                  <button
-                    style={{ background: "none", border: "none", cursor: "pointer",
-                      padding: "3px 5px", color: C.muted, display: "flex",
-                      alignItems: "center", borderRadius: "6px" }}
-                    title="Edit recruiter note"
-                    onClick={e => {
-                      e.stopPropagation();
-                      setEditingProject(p);
-                      setNoteVal(p.client_note || "");
-                      setNoteMsg("");
-                    }}>
-                    <Icon n="edit_note" size={16} />
-                  </button>
-                )}
-
-                {/* Apply link badge */}
-                {p.apply_enabled && !p.is_archived
-                  ? <span style={S.badge("info")}>Apply Link On</span>
-                  : !p.is_archived && <span style={S.badge("")}>Link Off</span>
-                }
-
-                {/* ── Kebab menu ────────────────────────────────────────── */}
-                <div style={{ position: "relative" }}>
-                  <button
-                    title="More options"
-                    onClick={e => {
-                      e.stopPropagation();
-                      setOpenMenuId(openMenuId === p.id ? null : p.id);
-                    }}
-                    style={{
-                      background: "none", border: "none", cursor: "pointer",
-                      padding: "3px 5px", color: C.muted, display: "flex",
-                      alignItems: "center", borderRadius: "6px",
-                      opacity: archiving === p.id ? 0.5 : 1,
-                    }}
-                    disabled={archiving === p.id}>
-                    {archiving === p.id
-                      ? <div style={{ width: "14px", height: "14px",
-                          border: `2px solid ${C.muted}`, borderTopColor: "transparent",
-                          borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-                      : <Icon n="more_vert" size={18} />
-                    }
-                  </button>
-
-                  {/* Dropdown */}
-                  {openMenuId === p.id && (
-                    <div
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        position: "absolute", right: 0, bottom: "calc(100% + 4px)",
-                        backgroundColor: C.white, border: `1px solid ${C.border}`,
-                        borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
-                        minWidth: "160px", zIndex: 200, overflow: "hidden",
-                      }}>
-                      {!p.is_archived ? (
-                        <button
-                          onClick={e => handleArchive(e, p)}
-                          style={{
-                            width: "100%", display: "flex", alignItems: "center",
-                            gap: "8px", padding: "10px 14px", background: "none",
-                            border: "none", cursor: "pointer", fontSize: "13px",
-                            color: C.textMid, fontFamily: fontB, textAlign: "left",
-                          }}
-                          onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
-                          onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
-                          <Icon n="inventory_2" size={15} color={C.muted} />
-                          Archive project
-                        </button>
-                      ) : (
-                        <button
-                          onClick={e => handleUnarchive(e, p)}
-                          style={{
-                            width: "100%", display: "flex", alignItems: "center",
-                            gap: "8px", padding: "10px 14px", background: "none",
-                            border: "none", cursor: "pointer", fontSize: "13px",
-                            color: C.textMid, fontFamily: fontB, textAlign: "left",
-                          }}
-                          onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
-                          onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}>
-                          <Icon n="unarchive" size={15} color={C.success} />
-                          Unarchive project
-                        </button>
-                      )}
+ 
+      {/* ── Grouped client cards ── */}
+      {!loading && projects.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {groupOrder.map(({ key, label, color }) => {
+            const clientProjects = grouped[key] || [];
+            const isExpanded = expandedClients.has(key);
+            return (
+              <div key={key} style={{
+                backgroundColor: C.white, borderRadius: "14px",
+                border: `1px solid ${C.border}`,
+                boxShadow: "0 1px 4px rgba(98,100,244,0.04)",
+                overflow: "hidden",
+              }}>
+                {/* Client header — click to collapse */}
+                <div
+                  onClick={() => toggleClient(key)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "12px",
+                    padding: "14px 18px", cursor: "pointer",
+                    backgroundColor: isExpanded ? `${color}08` : C.white,
+                    borderBottom: isExpanded ? `1px solid ${C.border}` : "none",
+                    transition: "background 0.15s",
+                  }}>
+                  <div style={{
+                    width: "32px", height: "32px", borderRadius: "8px",
+                    backgroundColor: `${color}15`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
+                  }}>
+                    <Icon n="business" size={16} color={color} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH, color: C.text }}>
+                      {label}
                     </div>
-                  )}
+                    <div style={{ fontSize: "11px", color: C.muted }}>
+                      {clientProjects.length} project{clientProjects.length !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                  <Icon n={isExpanded ? "expand_less" : "expand_more"} size={20} color={C.muted} />
                 </div>
-                {/* ── end kebab ─────────────────────────────────────────── */}
-
+ 
+                {/* Projects grid inside client card */}
+                {isExpanded && (
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))",
+                    gap: "12px",
+                    padding: "14px 16px",
+                  }}>
+                    {clientProjects.map(p => renderProjectCard(p))}
+                  </div>
+                )}
               </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
+            );
+          })}
+        </div>
+      )}
+ 
       {/* Edit Recruiter Note Modal */}
       {editingProject && (
         <div style={S.modal} onClick={() => setEditingProject(null)}>
           <div style={{ ...S.modalWrap, maxWidth: "500px" }} onClick={e => e.stopPropagation()}>
             <div style={S.modalHead}>
               <div>
-                <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "15px" }}>
-                  Edit Recruiter Note
-                </div>
-                <div style={{ fontSize: "12px", color: C.muted, marginTop: "2px" }}>
-                  {editingProject.title}
-                </div>
+                <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "15px" }}>Edit Recruiter Note</div>
+                <div style={{ fontSize: "12px", color: C.muted, marginTop: "2px" }}>{editingProject.title}</div>
               </div>
-              <button style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }}
-                onClick={() => setEditingProject(null)}>
+              <button style={{ background: "none", border: "none", cursor: "pointer", color: C.muted }} onClick={() => setEditingProject(null)}>
                 <Icon n="close" size={20} />
               </button>
             </div>
             <div style={S.modalBody}>
-              <div style={S.label}>
-                Recruiter / Client Note
-                <span style={{ fontWeight: "400", textTransform: "none", letterSpacing: 0,
-                  color: C.muted, marginLeft: "6px" }}>internal only · improves matching</span>
-              </div>
-              <textarea
-                style={{ ...S.input, resize: "vertical", minHeight: "100px" }}
-                placeholder="e.g. Client prefers ex-BFSI background. NGO experience a plus. Avoid notice > 60 days."
-                value={noteVal}
-                onChange={e => setNoteVal(e.target.value)}
-              />
-              {noteMsg === "saved" && (
-                <div style={{ fontSize: "12px", color: C.success, marginTop: "8px" }}>
-                  ✓ Saved — re-run Match on this project to apply changes
-                </div>
-              )}
-              {noteMsg === "error" && (
-                <div style={{ fontSize: "12px", color: C.error, marginTop: "8px" }}>
-                  Failed to save. Please try again.
-                </div>
-              )}
+              <div style={S.label}>Recruiter / Client Note</div>
+              <textarea style={{ ...S.input, resize: "vertical", minHeight: "100px" }}
+                placeholder="e.g. Client prefers ex-BFSI background…"
+                value={noteVal} onChange={e => setNoteVal(e.target.value)} />
+              {noteMsg === "saved" && <div style={{ fontSize: "12px", color: C.success, marginTop: "8px" }}>✓ Saved</div>}
+              {noteMsg === "error" && <div style={{ fontSize: "12px", color: C.error, marginTop: "8px" }}>Failed to save.</div>}
             </div>
             <div style={S.modalFoot}>
-              <button style={{ ...S.btn("primary"), opacity: noteSaving ? 0.6 : 1 }}
-                onClick={saveNote} disabled={noteSaving}>
+              <button style={{ ...S.btn("primary"), opacity: noteSaving ? 0.6 : 1 }} onClick={saveNote} disabled={noteSaving}>
                 <Icon n="save" size={14} />{noteSaving ? "Saving…" : "Save Note"}
               </button>
-              <button style={S.btn("outline")} onClick={() => setEditingProject(null)} disabled={noteSaving}>
-                Cancel
-              </button>
+              <button style={S.btn("outline")} onClick={() => setEditingProject(null)} disabled={noteSaving}>Cancel</button>
             </div>
           </div>
         </div>
@@ -5703,6 +5682,86 @@ function BulkCvUploadModal({ project, onClose, onComplete }) {
   );
 }
 
+// ─── QUALITY SPLIT BUTTON ─────────────────────────────────────────────────────
+function QualitySplitButton({ running, onScore, label, color, borderColor }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const btnColor  = color       || C.muted;
+  const btnBorder = borderColor || C.border;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <button
+        style={{ ...S.btn("outline", true), fontSize: "12px", color: running ? C.muted : btnColor,
+          borderColor: btnBorder, borderRight: "none", borderRadius: "10px 0 0 10px",
+          opacity: running ? 0.5 : 1, gap: "5px" }}
+        onClick={() => { if (!running) { onScore("new"); setOpen(false); } }}
+        disabled={running}
+        title="Score only unscored candidates"
+      >
+        <Icon n="verified" size={13} color={running ? C.muted : btnColor} />
+        {running ? "Scoring…" : label}
+        <span style={{ fontSize: "9px", fontWeight: "700",
+          backgroundColor: running ? C.surface : `${btnColor}18`,
+          color: running ? C.muted : btnColor,
+          padding: "1px 5px", borderRadius: "4px", marginLeft: "2px" }}>NEW</span>
+      </button>
+      <button
+        style={{ ...S.btn("outline", true), padding: "6px 7px", borderRadius: "0 10px 10px 0",
+          borderLeft: `1px solid ${btnBorder}`, color: running ? C.muted : btnColor,
+          borderColor: btnBorder, opacity: running ? 0.5 : 1, minWidth: "unset" }}
+        onClick={(e) => { e.stopPropagation(); if (!running) setOpen(o => !o); }}
+        disabled={running}
+      >
+        <Icon n={open ? "expand_less" : "expand_more"} size={14} />
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0,
+          backgroundColor: C.white, border: `1px solid ${C.border}`,
+          borderRadius: "10px", boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+          minWidth: "180px", zIndex: 300, overflow: "hidden" }}>
+          <button
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: "9px",
+              padding: "10px 14px", border: "none", background: "none", cursor: "pointer",
+              fontSize: "12px", color: C.textMid, fontFamily: fontB, textAlign: "left" }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}
+            onClick={() => { onScore("new"); setOpen(false); }}
+          >
+            <Icon n="fiber_new" size={15} color={C.primary} />
+            <div>
+              <div style={{ fontWeight: "700", color: C.text }}>New only</div>
+              <div style={{ fontSize: "11px", color: C.muted }}>Score unscored candidates only</div>
+            </div>
+          </button>
+          <div style={{ height: "1px", backgroundColor: C.border }} />
+          <button
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: "9px",
+              padding: "10px 14px", border: "none", background: "none", cursor: "pointer",
+              fontSize: "12px", color: C.textMid, fontFamily: fontB, textAlign: "left" }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}
+            onClick={() => { onScore("all"); setOpen(false); }}
+          >
+            <Icon n="refresh" size={15} color={C.warning} />
+            <div>
+              <div style={{ fontWeight: "700", color: C.text }}>Re-score all</div>
+              <div style={{ fontSize: "11px", color: C.muted }}>Overwrite existing scores</div>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── QUALITY BADGE ────────────────────────────────────────────────────────────
 function QualityBadge({ label, score, rationale }) {
   const [hovered, setHovered] = useState(false);
@@ -6017,14 +6076,12 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             </button>
           )}
           {!project.is_archived && (
-            <button
-              style={{ ...S.btn("outline", true), opacity: qualityRunning ? 0.6 : 1 }}
-              onClick={runQualityScore}
-              disabled={qualityRunning}
-            >
-              <Icon n="verified" size={13} />{qualityRunning ? "Scoring…" : "Quality Check"}
-            </button>
-          )}
+                           <QualitySplitButton
+                             running={qualityRunning}
+                            onScore={runQualityScore}
+                            label="Quality Check"
+                           />
+                          )}
           <button
             style={{
               ...S.btn(project.is_archived ? "outline" : "primary", true),
@@ -6152,22 +6209,16 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   {poolTab === "applied" && appliedCandidates.length > 0 && !project.is_archived && (
     <>
       <div style={{ width: "1px", height: "24px", backgroundColor: C.border, margin: "0 4px" }} />
-      <button
-        style={{
-          ...S.btn("outline", true),
-          fontSize: "12px",
-          color: C.success,
-          borderColor: "rgba(59,178,115,0.4)",
-          opacity: qualityRunning ? 0.5 : 1,
-        }}
-        onClick={() => runQualityScore("applied")}
-        disabled={qualityRunning}
-        title="Score only inbound applicants — saves GPT cost vs scoring full pool"
-      >
-        <Icon n="verified" size={13} color={C.success} />
-        Score Applied
-      </button>
-      {qualityAppliedMsg && (
+  
+   <QualitySplitButton
+            running={qualityRunning}
+           onScore={(scope) => runQualityScore(scope === "all" ? "applied" : "new")}
+           label="Score Applied"
+           color={C.success}
+           borderColor="rgba(59,178,115,0.4)"
+      />   
+
+     {qualityAppliedMsg && (
         <span style={{
           fontSize: "12px",
           color: qualityAppliedMsg.startsWith("✓") ? C.success : C.error,
@@ -6292,51 +6343,70 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
           })}
         </div>
       ) : (
-        /* ── Desktop table ── */
-        <div style={{ backgroundColor: C.white, borderRadius: "14px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
-          <table style={S.table}>
-            <thead>
-              <tr>
-                {poolTab === "matched" && (
-                  <th style={{ ...S.th, width: "36px", textAlign: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      style={{ cursor: "pointer", accentColor: C.primary }}
-                      title="Select all"
-                    />
-                  </th>
+      /* ── Desktop table ── */
+<div
+  style={{
+    backgroundColor: C.white,
+    borderRadius: "14px",
+    border: `1px solid ${C.border}`,
+    overflowX: "auto",
+  }}
+>
+  <table style={S.table}>
+    <thead>
+      <tr>
+        {poolTab === "matched" && (
+          <th style={{ ...S.th, width: "36px", textAlign: "center" }}>
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleSelectAll}
+              style={{ cursor: "pointer", accentColor: C.primary }}
+              title="Select all"
+            />
+          </th>
+        )}
+
+        {["Match", "Name", "Designation", "Exp", "Location", "Score Breakdown", "Quality", "Source", "Actions"].map(h => (
+          <th key={h} style={S.th}>
+            {h}
+          </th>
+        ))}
+      </tr>
+    </thead>
+
+    <tbody>
+      {displayCandidates.map(c => {
+        const badge = srcBadge(c.source);
+        const isSelected = selectedIds.has(c.candidate_id);
+
+        return (
+          <tr
+            key={c.candidate_id}
+            style={{
+              opacity: c.is_active ? 1 : 0.4,
+              backgroundColor: isSelected ? C.primaryDim : "",
+            }}
+            onMouseEnter={e => {
+              if (!isSelected) e.currentTarget.style.backgroundColor = C.surface;
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = isSelected ? C.primaryDim : "";
+            }}
+          >
+            {/* Checkbox — matched tab only */}
+            {poolTab === "matched" && (
+              <td style={{ ...S.td, width: "36px", textAlign: "center" }}>
+                {c.is_active && (
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(c.candidate_id)}
+                    style={{ cursor: "pointer", accentColor: C.primary }}
+                  />
                 )}
-                {["Match", "Name", "Designation", "Exp", "Location", "Score Breakdown", "Quality", "Source", "Actions"].map(h => (
-                  <th key={h} style={S.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {displayCandidates.map(c => {
-                const badge = srcBadge(c.source);
-                const isSelected = selectedIds.has(c.candidate_id);
-                return (
-                  <tr
-                    key={c.candidate_id}
-                    style={{ opacity: c.is_active ? 1 : 0.4, backgroundColor: isSelected ? C.primaryDim : "" }}
-                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = C.surface; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = isSelected ? C.primaryDim : ""; }}
-                  >
-                    {/* Checkbox — matched tab only */}
-                    {poolTab === "matched" && (
-                      <td style={{ ...S.td, width: "36px", textAlign: "center" }}>
-                        {c.is_active && (
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelect(c.candidate_id)}
-                            style={{ cursor: "pointer", accentColor: C.primary }}
-                          />
-                        )}
-                      </td>
-                    )}
+              </td>
+            )} 
 
                     {/* Match % */}
                     <td style={{ ...S.td, width: "60px", textAlign: "center" }}>
@@ -7366,11 +7436,14 @@ function clientSourceBadge(source) {
 // Client project detail page — candidate table
 function ClientProjectDetailPage({ project, onBack }) {
   const isMobile = useIsMobile();
-  const [detail,     setDetail]     = useState(null);
-  const [candidates, setCandidates] = useState([]);
-  const [loading,    setLoading]    = useState(true);
+  const [detail,         setDetail]         = useState(null);
+  const [candidates,     setCandidates]     = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [copiedLink,     setCopiedLink]     = useState(false);
 
-  useEffect(() => {
+  const fetchData = () => {
+    setLoading(true);
     Promise.all([
       apiFetch(`/api/v1/client/projects/${project.id}`).then(r => r.json()),
       apiFetch(`/api/v1/client/projects/${project.id}/candidates`).then(r => r.json()),
@@ -7381,20 +7454,46 @@ function ClientProjectDetailPage({ project, onBack }) {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchData();
   }, [project.id]);
 
   if (loading) return (
     <div style={{ textAlign: "center", padding: "60px", color: C.muted }}>
-      <div style={{ width: "28px", height: "28px", border: `3px solid ${C.primary}`,
-        borderTopColor: "transparent", borderRadius: "50%",
-        animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
+      <div
+        style={{
+          width: "28px",
+          height: "28px",
+          border: `3px solid ${C.primary}`,
+          borderTopColor: "transparent",
+          borderRadius: "50%",
+          animation: "spin 0.8s linear infinite",
+          margin: "0 auto 14px",
+        }}
+      />
       Loading applicants…
     </div>
   );
 
   const expRange = detail
-    ? [detail.min_experience, detail.max_experience].filter(v => v != null).join("–") + (detail.min_experience != null ? " yrs" : "")
+    ? [detail.min_experience, detail.max_experience]
+        .filter(v => v != null)
+        .join("–") + (detail.min_experience != null ? " yrs" : "")
     : "";
+
+  const applySlug = project.apply_slug || null;
+  const applyUrl  = applySlug ? `https://talint.atrios.in/apply/${applySlug}` : null;
+
+  const handleCopyLink = async () => {
+    if (!applyUrl) return;
+    try {
+      await navigator.clipboard.writeText(applyUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch (_) {}
+  };
 
   return (
     <div>
@@ -7403,37 +7502,124 @@ function ClientProjectDetailPage({ project, onBack }) {
         <button style={{ ...S.btn("outline", true), marginTop: "2px" }} onClick={onBack}>
           <Icon n="arrow_back" size={14} />Back
         </button>
+
         <div style={{ flex: 1 }}>
           <div style={{ ...S.pageTitle, marginBottom: "4px" }}>{project.title}</div>
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             {detail?.location && (
-              <span style={{ fontSize: "12px", color: C.muted, display: "flex", alignItems: "center", gap: "4px" }}>
-                <Icon n="location_on" size={13} />{detail.location}
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: C.muted,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+              >
+                <Icon n="location_on" size={13} />
+                {detail.location}
               </span>
             )}
+
             {expRange && (
-              <span style={{ fontSize: "12px", color: C.muted, display: "flex", alignItems: "center", gap: "4px" }}>
-                <Icon n="work_history" size={13} />{expRange}
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: C.muted,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+              >
+                <Icon n="work_history" size={13} />
+                {expRange}
               </span>
             )}
-            {detail?.apply_enabled
-              ? <span style={S.badge("info")}>Applications Open</span>
-              : <span style={S.badge("")}>Applications Closed</span>
-            }
+
+            {detail?.apply_enabled ? (
+              <span style={S.badge("info")}>Applications Open</span>
+            ) : (
+              <span style={S.badge("")}>Applications Closed</span>
+            )}
           </div>
         </div>
+
+        <button style={S.btn("outline", true)} onClick={() => setShowBulkUpload(true)}>
+          <Icon n="upload_file" size={13} />Upload CVs
+        </button>
       </div>
 
       {/* JD summary */}
       {detail?.jd_public_summary && (
-        <div style={{ ...S.card, marginBottom: "20px",
-          backgroundColor: C.primaryDim, border: `1px solid rgba(98,100,244,0.15)` }}>
-          <div style={{ fontSize: "10px", fontWeight: "700", color: C.primary,
-            textTransform: "uppercase", letterSpacing: "0.1em",
-            marginBottom: "8px", fontFamily: fontH }}>Role Description</div>
+        <div
+          style={{
+            ...S.card,
+            marginBottom: "16px",
+            backgroundColor: C.primaryDim,
+            border: `1px solid rgba(98,100,244,0.15)`,
+          }}
+        >
+          <div
+            style={{
+              fontSize: "10px",
+              fontWeight: "700",
+              color: C.primary,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: "8px",
+              fontFamily: fontH,
+            }}
+          >
+            Role Description
+          </div>
           <div style={{ fontSize: "13px", color: C.textMid, lineHeight: "1.7" }}>
             {detail.jd_public_summary}
           </div>
+        </div>
+      )}
+
+      {/* Apply link card */}
+      {applyUrl && (
+        <div
+          style={{
+            ...S.card,
+            display: "flex",
+            alignItems: "center",
+            gap: "14px",
+            flexWrap: "wrap",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: "200px" }}>
+            <div style={S.label}>Application Link</div>
+            <div
+              style={{
+                fontSize: "12px",
+                color: detail?.apply_enabled ? C.primary : C.muted,
+                fontFamily: font,
+                wordBreak: "break-all",
+              }}
+            >
+              {applyUrl}
+            </div>
+            <div style={{ fontSize: "11px", color: C.muted, marginTop: "3px" }}>
+              Share this link with candidates to collect applications directly
+            </div>
+          </div>
+
+          <button style={S.btn("outline", true)} onClick={handleCopyLink}>
+            <Icon n={copiedLink ? "check" : "content_copy"} size={13} />
+            {copiedLink ? "Copied!" : "Copy Link"}
+          </button>
+
+          <a
+            href={applyUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ ...S.btn("primary", true), textDecoration: "none" }}
+          >
+            <Icon n="open_in_new" size={13} />Preview
+          </a>
         </div>
       )}
 
@@ -7445,8 +7631,13 @@ function ClientProjectDetailPage({ project, onBack }) {
       {/* No candidates */}
       {candidates.length === 0 && (
         <div style={{ textAlign: "center", padding: "48px 0", color: C.muted }}>
-          <Icon n="people" size={40} color={C.border} style={{ display: "block", margin: "0 auto 12px" }} />
-          No applicants yet. Check back after the apply link has been shared.
+          <Icon
+            n="people"
+            size={40}
+            color={C.border}
+            style={{ display: "block", margin: "0 auto 12px" }}
+          />
+          No applicants yet. Share the application link or upload CVs directly using the button above.
         </div>
       )}
 
@@ -7459,24 +7650,44 @@ function ClientProjectDetailPage({ project, onBack }) {
               <div key={c.candidate_id} style={S.cardMobile}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
-                    <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>{c.name || "—"}</div>
+                    <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>
+                      {c.name || "—"}
+                    </div>
                     <div style={{ fontSize: "12px", color: C.muted }}>
                       {[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}
                     </div>
                   </div>
                   <ClientScorePill score={c.match_score} />
                 </div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", alignItems: "center" }}>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    marginTop: "10px",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
                   {c.total_experience != null && (
-                    <span style={{ fontSize: "12px", color: C.muted }}>{c.total_experience}y exp</span>
+                    <span style={{ fontSize: "12px", color: C.muted }}>
+                      {c.total_experience}y exp
+                    </span>
                   )}
+
                   {c.location && (
                     <span style={{ fontSize: "12px", color: C.muted }}>{c.location}</span>
                   )}
+
                   <span style={S.badge(badge.type)}>{badge.label}</span>
+
                   {c.cv_storage_url && (
-                    <a href={c.cv_storage_url} target="_blank" rel="noreferrer"
-                      style={{ ...S.btn("outline", true), fontSize: "11px", textDecoration: "none" }}>
+                    <a
+                      href={c.cv_storage_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ ...S.btn("outline", true), fontSize: "11px", textDecoration: "none" }}
+                    >
                       <Icon n="open_in_new" size={12} />View CV
                     </a>
                   )}
@@ -7489,8 +7700,14 @@ function ClientProjectDetailPage({ project, onBack }) {
 
       {/* Desktop table */}
       {candidates.length > 0 && !isMobile && (
-        <div style={{ backgroundColor: C.white, borderRadius: "14px",
-          border: `1px solid ${C.border}`, overflow: "hidden" }}>
+        <div
+          style={{
+            backgroundColor: C.white,
+            borderRadius: "14px",
+            border: `1px solid ${C.border}`,
+            overflow: "hidden",
+          }}
+        >
           <table style={S.table}>
             <thead>
               <tr>
@@ -7503,41 +7720,97 @@ function ClientProjectDetailPage({ project, onBack }) {
               {candidates.map(c => {
                 const badge = clientSourceBadge(c.source);
                 return (
-                  <tr key={c.candidate_id}
-                    onMouseEnter={e => e.currentTarget.style.backgroundColor = C.surface}
-                    onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>
+                  <tr
+                    key={c.candidate_id}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = C.surface; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = ""; }}
+                  >
                     <td style={{ ...S.td, width: "70px", textAlign: "center" }}>
                       <ClientScorePill score={c.match_score} />
                     </td>
+
                     <td style={{ ...S.td, maxWidth: "160px" }}>
-                      <div style={{ fontWeight: "700", fontFamily: fontH, fontSize: "13px",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <div
+                        style={{
+                          fontWeight: "700",
+                          fontFamily: fontH,
+                          fontSize: "13px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {c.name || "—"}
                       </div>
                     </td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.textMid,
-                      maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "12px",
+                        color: C.textMid,
+                        maxWidth: "160px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {c.current_designation || "—"}
                     </td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.muted,
-                      maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "12px",
+                        color: C.muted,
+                        maxWidth: "130px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {c.current_company || "—"}
                     </td>
-                    <td style={{ ...S.td, fontFamily: font, fontSize: "12px",
-                      color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontFamily: font,
+                        fontSize: "12px",
+                        color: C.primary,
+                        fontWeight: "600",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {c.total_experience != null ? `${c.total_experience}y` : "—"}
                     </td>
-                    <td style={{ ...S.td, fontSize: "12px", color: C.muted,
-                      maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+
+                    <td
+                      style={{
+                        ...S.td,
+                        fontSize: "12px",
+                        color: C.muted,
+                        maxWidth: "120px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {c.location || "—"}
                     </td>
+
                     <td style={S.td}>
                       <span style={S.badge(badge.type)}>{badge.label}</span>
                     </td>
+
                     <td style={S.td}>
                       {c.cv_storage_url ? (
-                        <a href={c.cv_storage_url} target="_blank" rel="noreferrer"
-                          style={{ ...S.btn("outline", true), textDecoration: "none", fontSize: "11px" }}>
+                        <a
+                          href={c.cv_storage_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ ...S.btn("outline", true), textDecoration: "none", fontSize: "11px" }}
+                        >
                           <Icon n="open_in_new" size={12} />View CV
                         </a>
                       ) : (
@@ -7551,6 +7824,18 @@ function ClientProjectDetailPage({ project, onBack }) {
           </table>
         </div>
       )}
+
+      {/* Bulk upload modal */}
+      {showBulkUpload && (
+        <BulkCvUploadModal
+          project={project}
+          onClose={() => setShowBulkUpload(false)}
+          onComplete={() => {
+            setShowBulkUpload(false);
+            fetchData();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -7558,50 +7843,39 @@ function ClientProjectDetailPage({ project, onBack }) {
 // Top-level client portal wrapper
 function ClientPortal({ user, onLogout }) {
   const isMobile = useIsMobile();
-  const [accessMeta,       setAccessMeta]       = useState(null);
-  const [selectedProject,  setSelectedProject]  = useState(null);
-  const [hardExpired,      setHardExpired]       = useState(false);
+  const [accessMeta,      setAccessMeta]      = useState(null);
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [hardExpired,     setHardExpired]      = useState(false);
 
   useEffect(() => {
     apiFetch("/api/v1/client/me")
-      .then(r => {
-        if (r.status === 403) { setHardExpired(true); return null; }
-        return r.json();
-      })
+      .then(r => { if (r.status === 403) { setHardExpired(true); return null; } return r.json(); })
       .then(d => { if (d) setAccessMeta(d); })
       .catch(() => {});
   }, []);
 
-  // Hard-expired — full-page screen, nothing else renders
   if (hardExpired) return <ClientHardExpiredScreen />;
 
   const expiryState = accessMeta
     ? getExpiryState(accessMeta.access_until, accessMeta.days_until_expiry)
     : "ok";
 
-  const initials = user.username.slice(0, 2).toUpperCase();
-  const clientName = accessMeta?.client_name || user.username;
+  const initials    = user.username.slice(0, 2).toUpperCase();
+  const clientName  = accessMeta?.client_name || user.username;
 
   return (
     <div style={S.app}>
-      {/* Top bar */}
-      <header style={{
-        ...S.header,
-        display: "flex",
-      }}>
+      <header style={{ ...S.header, display: "flex" }}>
         <div style={S.logo}>
           <div style={S.logoIcon}>A</div>
           <div style={S.logoText}>Talent Intelligence</div>
         </div>
-
-        {/* Client name centred */}
         {!isMobile && (
           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)",
             fontSize: "13px", fontWeight: "600", color: C.muted }}>
             {clientName}
           </div>
         )}
-
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px",
             padding: "5px 12px 5px 5px", borderRadius: "24px",
@@ -7630,15 +7904,12 @@ function ClientPortal({ user, onLogout }) {
         </div>
       </header>
 
-      {/* Grace period modal — overlays everything but doesn't hard-block yet */}
       {expiryState === "grace" && <ClientExpiredModal />}
 
       <main style={isMobile ? S.mainMobile : S.main}>
-        {/* Expiry warning banner */}
         {expiryState === "warning" && accessMeta && (
           <ClientExpiryBanner daysLeft={accessMeta.days_until_expiry} />
         )}
-
         {selectedProject ? (
           <ClientProjectDetailPage
             project={selectedProject}
