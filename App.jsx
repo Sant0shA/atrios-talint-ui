@@ -704,14 +704,59 @@ function ProjectWeightSliders({ weights, onChange }) {
     </div>
   );
 }
+// ─── DOMAIN TIER LABEL ───────────────────────────────────────────────────────
+
+function domainTierLabel(score) {
+  if (score == null)   return null;
+  if (score >= 1.0)    return { label: "Ideal · Sub-domain",    color: "#3B6D11", bg: "#EAF3DE" };
+  if (score >= 0.90)   return { label: "Ideal · Also-relevant", color: "#3B6D11", bg: "#EAF3DE" };
+  if (score >= 0.70)   return { label: "Ideal · Broad sector",  color: "#3B6D11", bg: "#EAF3DE" };
+  if (score >= 0.55)   return { label: "Accept · Sub-domain",   color: "#185FA5", bg: "#E6F1FB" };
+  if (score >= 0.45)   return { label: "Acceptable",            color: "#185FA5", bg: "#E6F1FB" };
+  if (score >= 0.35)   return { label: "Acceptable · Weak",     color: "#854F0B", bg: "#FAEEDA" };
+  return                      { label: "No domain match",       color: "#A32D2D", bg: "#FCEBEB" };
+}
+
 // ─── SCORE PILL ───────────────────────────────────────────────────────────────
-const ScorePill = ({ label, value, color }) => (
-  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px",
-    padding: "2px 8px", borderRadius: "20px", fontSize: "10px", fontWeight: "700",
-    backgroundColor: `${color}18`, color }}>
-    {label}: {Math.round(value * 100)}%
-  </span>
-);
+
+function ScorePill({ label, value, color, tooltipContent }) {
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+
+  const showTooltip = () => {
+    if (!tooltipContent || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 6, left: rect.left });
+  };
+
+  return (
+    <div style={{ display: "inline-block" }} ref={ref}>
+      <span
+        onMouseEnter={showTooltip}
+        onMouseLeave={() => setPos(null)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: "3px",
+          padding: "2px 8px", borderRadius: "20px", fontSize: "10px", fontWeight: "700",
+          backgroundColor: `${color}18`, color, cursor: "default",
+        }}
+      >
+        {label}: {Math.round(value * 100)}%
+      </span>
+      {pos && tooltipContent && (
+        <div style={{
+          position: "fixed", top: pos.top, left: pos.left,
+          background: C.white, border: `1px solid ${C.borderMid}`,
+          borderRadius: 10, padding: "12px 14px",
+          minWidth: 220, maxWidth: 260, zIndex: 9999,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+          fontFamily: fontB, pointerEvents: "none",
+        }}>
+          {tooltipContent}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── SIMILAR CANDIDATES PANEL (opens in new window) ──────────────────────────
 function SimilarPanel({ seedId, seedName }) {
@@ -4389,37 +4434,42 @@ function HiringBriefFlow({ jobTitle, jdText, parsedSkills = [], onComplete, onCa
   const [genError, setGenError] = useState("");
 
   // ── Answer store ───────────────────────────────────────────────────────────
-  const [ans, setAns] = useState({
-    // Q1 — experience
-    exp_min: "",
-    exp_max: "",
-    exp_flexible: false,
+  // ─── HIRING BRIEF FLOW — ANS STATE ───────────────────────────────────────────
+	// Replace const [ans, setAns] = useState({...})
 
-    // Q2 — domain (ideal / acceptable / reject)
-    domain_ideal: [],
-    domain_acceptable: [],
-    domain_reject: "",
-    target_companies: "",
+	const [ans, setAns] = useState({
+	  // Q1 — experience
+	  exp_min: "",
+	  exp_max: "",
+	  exp_flexible: false,
 
-    // Q3 — must-have skills (from JD chips) + custom
-    must_have: [],
-    // nice_to_have = parsedSkills minus must_have (computed at submit)
-    custom_must: "",
+	  // Q2 — domain (ideal / acceptable / reject) + sub-domains
+	  domain_ideal: [],
+	  domain_acceptable: [],
+	  domain_reject: "",
+	  target_companies: "",
+	  ideal_sub_domain_primary: "",       // single select — e.g. "livelihood"
+	  ideal_sub_domain_also: [],          // multi select — e.g. ["rural_development"]
+	  acceptable_sub_domains: {},         // map — e.g. { "NGO / Social Sector": "microfinance" }
 
-    // Q4 — irrelevant skills
-    irrelevant: [],
+	  // Q3 — must-have skills
+	  must_have: [],
+	  custom_must: "",
 
-    // Q5 — positive signals (what good experience looks like)
-    positive_signals: "",
+	  // Q4 — good to have skills (renamed from irrelevant)
+	  good_to_have: [],
 
-    // Q6 — dealbreakers
-    dealbreakers: [],
-    dealbreaker_custom: "",
+	  // Q5 — positive signals
+	  positive_signals: "",
 
-    // Q7 — adjacent backgrounds
-    adjacent_backgrounds: "",
-    transferable_signals: "",
-  });
+	  // Q6 — dealbreakers
+	  dealbreakers: [],
+	  dealbreaker_custom: "",
+
+	  // Q7 — adjacent backgrounds
+	  adjacent_backgrounds: "",
+	  transferable_signals: "",
+	});
 
   const setA = (key, val) => setAns(a => ({ ...a, [key]: val }));
   const toggleArr = (key, val) =>
@@ -4443,7 +4493,31 @@ function HiringBriefFlow({ jobTitle, jdText, parsedSkills = [], onComplete, onCa
     "Healthcare / Pharma",
     "Any",
   ];
+  // ─── HIRING BRIEF FLOW — SUB-DOMAIN MAP ──────────────────────────────────────
 
+	const SUB_DOMAIN_OPTIONS = {
+	  "NGO / Social Sector": [
+		"Livelihoods", "Rural Development", "Public Health",
+		"Education", "Microfinance", "Fundraising / Philanthropy",
+		"Advocacy / Policy", "WASH / Sanitation", "Gender & Rights",
+	  ],
+	  "BFSI": [
+		"Wealth Management", "Retail Banking", "Investment Banking",
+		"Microfinance", "Insurance", "Capital Markets", "Fintech",
+	  ],
+	  "Big 4 / Consulting": [
+		"Strategy", "Operations", "Risk & Compliance",
+		"Financial Advisory", "Technology Consulting", "HR Consulting",
+	  ],
+	  "Healthcare / Pharma": [
+		"Clinical Research", "Public Health", "MedTech",
+		"Hospital Operations", "Pharma Sales", "Regulatory Affairs",
+	  ],
+	  "IT / Tech / Startup": [
+		"Product Management", "Engineering", "Data & AI",
+		"Cybersecurity", "Cloud / DevOps", "SaaS / B2B",
+	  ],
+	};
   const DEALBREAKER_OPTIONS = [
     "Less than minimum experience",
     "Never worked in this industry",
@@ -4467,38 +4541,46 @@ function HiringBriefFlow({ jobTitle, jdText, parsedSkills = [], onComplete, onCa
     ];
     const niceToHave = parsedSkills.filter(s => !mustHave.includes(s));
 
-    const structured = {
-      experience: {
-        min: ans.exp_min ? parseInt(ans.exp_min) : null,
-        max: ans.exp_max ? parseInt(ans.exp_max) : null,
-        flexible: ans.exp_flexible,
-      },
-      domain: {
-        ideal: ans.domain_ideal,
-        acceptable: ans.domain_acceptable,
-        reject: ans.domain_reject ? [ans.domain_reject] : [],
-      },
-      target_companies: ans.target_companies
-        ? ans.target_companies.split(",").map(s => s.trim()).filter(Boolean)
-        : [],
-      must_have_skills: mustHave,
-      nice_to_have_skills: niceToHave,
-      irrelevant_skills: ans.irrelevant,
-      strong_positive_signals: ans.positive_signals
-        ? ans.positive_signals.split("\n").map(s => s.trim()).filter(Boolean)
-        : [],
-      dealbreakers: [
-        ...ans.dealbreakers,
-        ...ans.dealbreaker_custom.split("\n").map(s => s.trim()).filter(Boolean),
-      ],
-      strong_negative_signals: [],
-      adjacent_backgrounds: ans.adjacent_backgrounds
-        ? ans.adjacent_backgrounds.split("\n").map(s => s.trim()).filter(Boolean)
-        : [],
-      transferable_signals: ans.transferable_signals
-        ? ans.transferable_signals.split("\n").map(s => s.trim()).filter(Boolean)
-        : [],
-    };
+    // ─── HIRING BRIEF FLOW — STRUCTURED OUTPUT ────────────────────────────────────
+
+	const structured = {
+	  experience: {
+		min: ans.exp_min ? parseInt(ans.exp_min) : null,
+		max: ans.exp_max ? parseInt(ans.exp_max) : null,
+		flexible: ans.exp_flexible,
+	  },
+	  domain: {
+		ideal: ans.domain_ideal,
+		ideal_sub_domain: {
+		  primary: ans.ideal_sub_domain_primary || null,
+		  also_relevant: ans.ideal_sub_domain_also,
+		},
+		acceptable: ans.domain_acceptable,
+		acceptable_sub_domains: ans.acceptable_sub_domains,
+		reject: ans.domain_reject ? [ans.domain_reject] : [],
+	  },
+	  target_companies: ans.target_companies
+		? ans.target_companies.split(",").map(s => s.trim()).filter(Boolean)
+		: [],
+	  must_have_skills: mustHave,
+	  good_to_have_skills: ans.good_to_have,
+	  nice_to_have_skills: niceToHave,
+	  irrelevant_skills: [],
+	  strong_positive_signals: ans.positive_signals
+		? ans.positive_signals.split("\n").map(s => s.trim()).filter(Boolean)
+		: [],
+	  dealbreakers: [
+		...ans.dealbreakers,
+		...ans.dealbreaker_custom.split("\n").map(s => s.trim()).filter(Boolean),
+	  ],
+	  strong_negative_signals: [],
+	  adjacent_backgrounds: ans.adjacent_backgrounds
+		? ans.adjacent_backgrounds.split("\n").map(s => s.trim()).filter(Boolean)
+		: [],
+	  transferable_signals: ans.transferable_signals
+		? ans.transferable_signals.split("\n").map(s => s.trim()).filter(Boolean)
+		: [],
+	};
 
     const prompt = `You are a senior recruiter at ATRIOS talent firm.
 
@@ -4775,95 +4857,199 @@ Keep it under 300 words. Be specific and direct. Write for a recruiter who will 
     </div>
   );
 
-  const renderQ2 = () => (
-    <div>
-      {qLabel("Which backgrounds are IDEAL vs ACCEPTABLE for this role?")}
-      {qSub("Select in each column. A candidate from Ideal gets higher priority in matching.")}
+  // ─── HIRING BRIEF FLOW — RENDER Q2 ───────────────────────────────────────────
+	const renderQ2 = () => {
+	  const idealSubs   = ans.domain_ideal.flatMap(d => SUB_DOMAIN_OPTIONS[d] || []);
+	  const hasIdealSub = idealSubs.length > 0;
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
-        {/* Ideal */}
-        <div>
-          <div style={{
-            fontSize: "11px", fontWeight: "700", color: C.success,
-            textTransform: "uppercase", letterSpacing: "0.08em",
-            marginBottom: "8px", display: "flex", alignItems: "center", gap: "4px",
-          }}>
-            <Icon n="star" size={12} color={C.success} /> Ideal
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {DOMAIN_OPTIONS.map(opt => (
-              <label key={opt} style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                cursor: "pointer", fontSize: "12px", fontWeight: "500",
-                padding: "7px 10px", borderRadius: "8px",
-                border: `1px solid ${ans.domain_ideal.includes(opt) ? C.success : C.border}`,
-                backgroundColor: ans.domain_ideal.includes(opt) ? "rgba(59,178,115,0.06)" : C.white,
-                transition: "all 0.12s", color: C.text,
-              }}>
-                <input
-                  type="checkbox"
-                  checked={ans.domain_ideal.includes(opt)}
-                  onChange={() => toggleArr("domain_ideal", opt)}
-                  style={{ accentColor: C.success, width: "14px", height: "14px" }}
-                />
-                {opt}
-              </label>
-            ))}
-          </div>
-        </div>
+	  return (
+		<div>
+		  {qLabel("Which backgrounds are IDEAL vs ACCEPTABLE for this role?")}
+		  {qSub("Select in each column. Ideal candidates rank higher in matching.")}
 
-        {/* Acceptable */}
-        <div>
-          <div style={{
-            fontSize: "11px", fontWeight: "700", color: C.warning,
-            textTransform: "uppercase", letterSpacing: "0.08em",
-            marginBottom: "8px", display: "flex", alignItems: "center", gap: "4px",
-          }}>
-            <Icon n="check" size={12} color={C.warning} /> Acceptable
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {DOMAIN_OPTIONS.map(opt => (
-              <label key={opt} style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                cursor: "pointer", fontSize: "12px", fontWeight: "500",
-                padding: "7px 10px", borderRadius: "8px",
-                border: `1px solid ${ans.domain_acceptable.includes(opt) ? C.warning : C.border}`,
-                backgroundColor: ans.domain_acceptable.includes(opt) ? "rgba(217,119,6,0.06)" : C.white,
-                transition: "all 0.12s", color: C.text,
-              }}>
-                <input
-                  type="checkbox"
-                  checked={ans.domain_acceptable.includes(opt)}
-                  onChange={() => toggleArr("domain_acceptable", opt)}
-                  style={{ accentColor: C.warning, width: "14px", height: "14px" }}
-                />
-                {opt}
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
+		  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+			{/* Ideal */}
+			<div>
+			  <div style={{ fontSize: "11px", fontWeight: "700", color: C.success, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
+				<Icon n="star" size={12} color={C.success} /> Ideal
+			  </div>
+			  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+				{DOMAIN_OPTIONS.map(opt => (
+				  <label key={opt} style={{
+					display: "flex", alignItems: "center", gap: "8px",
+					cursor: "pointer", fontSize: "12px", fontWeight: "500",
+					padding: "7px 10px", borderRadius: "8px",
+					border: `1px solid ${ans.domain_ideal.includes(opt) ? C.success : C.border}`,
+					backgroundColor: ans.domain_ideal.includes(opt) ? "rgba(59,178,115,0.06)" : C.white,
+					transition: "all 0.12s", color: C.text,
+				  }}>
+					<input
+					  type="checkbox"
+					  checked={ans.domain_ideal.includes(opt)}
+					  onChange={() => {
+						toggleArr("domain_ideal", opt);
+						// clear sub-domain selections if domain deselected
+						if (ans.domain_ideal.includes(opt)) {
+						  setA("ideal_sub_domain_primary", "");
+						  setA("ideal_sub_domain_also", []);
+						}
+					  }}
+					  style={{ accentColor: C.success, width: "14px", height: "14px" }}
+					/>
+					{opt}
+				  </label>
+				))}
+			  </div>
+			</div>
 
-      <div>
-        <label style={S.label}>Specific companies to prioritise (optional)</label>
-        <input
-          style={{ ...S.input, marginTop: "4px" }}
-          placeholder="e.g. Tata, Unilever, McKinsey, Big 4"
-          value={ans.target_companies}
-          onChange={e => setA("target_companies", e.target.value)}
-        />
-      </div>
-      <div style={{ marginTop: "12px" }}>
-        <label style={S.label}>Backgrounds to REJECT (optional)</label>
-        <input
-          style={{ ...S.input, marginTop: "4px" }}
-          placeholder="e.g. Pure tech companies, Government only, Sales background"
-          value={ans.domain_reject}
-          onChange={e => setA("domain_reject", e.target.value)}
-        />
-      </div>
-    </div>
-  );
+			{/* Acceptable */}
+			<div>
+			  <div style={{ fontSize: "11px", fontWeight: "700", color: C.warning, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
+				<Icon n="check" size={12} color={C.warning} /> Acceptable
+			  </div>
+			  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+				{DOMAIN_OPTIONS.map(opt => (
+				  <label key={opt} style={{
+					display: "flex", alignItems: "center", gap: "8px",
+					cursor: "pointer", fontSize: "12px", fontWeight: "500",
+					padding: "7px 10px", borderRadius: "8px",
+					border: `1px solid ${ans.domain_acceptable.includes(opt) ? C.warning : C.border}`,
+					backgroundColor: ans.domain_acceptable.includes(opt) ? "rgba(217,119,6,0.06)" : C.white,
+					transition: "all 0.12s", color: C.text,
+				  }}>
+					<input
+					  type="checkbox"
+					  checked={ans.domain_acceptable.includes(opt)}
+					  onChange={() => {
+						toggleArr("domain_acceptable", opt);
+						// clear acceptable sub-domain if deselected
+						if (ans.domain_acceptable.includes(opt)) {
+						  const updated = { ...ans.acceptable_sub_domains };
+						  delete updated[opt];
+						  setA("acceptable_sub_domains", updated);
+						}
+					  }}
+					  style={{ accentColor: C.warning, width: "14px", height: "14px" }}
+					/>
+					{opt}
+				  </label>
+				))}
+			  </div>
+			</div>
+		  </div>
+
+		  {/* ── Ideal sub-domain (appears when ideal domain selected has sub-options) ── */}
+		  {hasIdealSub && (
+			<div style={{ marginBottom: "16px", padding: "14px", borderRadius: "10px", border: `1px solid ${C.border}`, backgroundColor: "rgba(59,178,115,0.03)" }}>
+			  <div style={{ fontSize: "12px", fontWeight: "700", color: C.success, marginBottom: "4px", display: "flex", alignItems: "center", gap: "5px" }}>
+				<Icon n="account_tree" size={13} color={C.success} />
+				Sub-sector focus within ideal domain
+			  </div>
+			  <div style={{ fontSize: "11px", color: C.muted, marginBottom: "10px" }}>
+				Candidates matching the primary sub-sector rank highest. Select one primary, optionally mark others as also relevant.
+			  </div>
+
+			  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+				{idealSubs.map(sub => {
+				  const isPrimary  = ans.ideal_sub_domain_primary === sub;
+				  const isAlso     = ans.ideal_sub_domain_also.includes(sub);
+				  return (
+					<div key={sub} style={{ display: "flex", borderRadius: "20px", overflow: "hidden", border: `1px solid ${isPrimary ? C.success : isAlso ? "#6264f4" : C.border}`, fontSize: "11px", fontWeight: "600" }}>
+					  <button
+						onClick={() => setA("ideal_sub_domain_primary", isPrimary ? "" : sub)}
+						style={{
+						  padding: "4px 10px", border: "none", cursor: "pointer",
+						  background: isPrimary ? C.success : C.white,
+						  color: isPrimary ? C.white : C.text,
+						  transition: "all 0.12s",
+						}}
+						title="Set as primary sub-sector"
+					  >
+						{isPrimary ? "★ " : ""}{sub}
+					  </button>
+					  {!isPrimary && (
+						<button
+						  onClick={() => toggleArr("ideal_sub_domain_also", sub)}
+						  style={{
+							padding: "4px 8px", border: "none", borderLeft: `1px solid ${isAlso ? "#6264f4" : C.border}`,
+							cursor: "pointer",
+							background: isAlso ? "#6264f418" : C.white,
+							color: isAlso ? "#6264f4" : C.muted,
+							transition: "all 0.12s",
+							fontSize: "10px",
+						  }}
+						  title="Mark as also relevant"
+						>
+						  {isAlso ? "✓" : "+"}
+						</button>
+					  )}
+					</div>
+				  );
+				})}
+			  </div>
+			  {ans.ideal_sub_domain_primary && (
+				<div style={{ fontSize: "11px", color: C.muted, marginTop: "8px" }}>
+				  Primary: <span style={{ color: C.success, fontWeight: "600" }}>{ans.ideal_sub_domain_primary}</span>
+				  {ans.ideal_sub_domain_also.length > 0 && ` · Also relevant: ${ans.ideal_sub_domain_also.join(", ")}`}
+				</div>
+			  )}
+			</div>
+		  )}
+
+		  {/* ── Acceptable sub-domain (one per selected acceptable domain that has options) ── */}
+		  {ans.domain_acceptable.filter(d => SUB_DOMAIN_OPTIONS[d]?.length > 0).map(domain => (
+			<div key={domain} style={{ marginBottom: "12px", padding: "12px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, backgroundColor: "rgba(217,119,6,0.03)" }}>
+			  <div style={{ fontSize: "12px", fontWeight: "700", color: C.warning, marginBottom: "4px" }}>
+				Preferred sub-sector within {domain}
+				<span style={{ fontSize: "10px", fontWeight: "400", color: C.muted, marginLeft: "6px" }}>optional</span>
+			  </div>
+			  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
+				{SUB_DOMAIN_OPTIONS[domain].map(sub => {
+				  const selected = ans.acceptable_sub_domains[domain] === sub;
+				  return (
+					<button
+					  key={sub}
+					  onClick={() => setA("acceptable_sub_domains", {
+						...ans.acceptable_sub_domains,
+						[domain]: selected ? "" : sub,
+					  })}
+					  style={{
+						padding: "4px 12px", borderRadius: "20px", fontSize: "11px",
+						fontWeight: "600", border: `1px solid ${selected ? C.warning : C.border}`,
+						background: selected ? "rgba(217,119,6,0.08)" : C.white,
+						color: selected ? C.warning : C.muted,
+						cursor: "pointer", transition: "all 0.12s",
+					  }}
+					>
+					  {sub}
+					</button>
+				  );
+				})}
+			  </div>
+			</div>
+		  ))}
+
+		  <div>
+			<label style={S.label}>Specific companies to prioritise (optional)</label>
+			<input
+			  style={{ ...S.input, marginTop: "4px" }}
+			  placeholder="e.g. Tata, Unilever, McKinsey, Big 4"
+			  value={ans.target_companies}
+			  onChange={e => setA("target_companies", e.target.value)}
+			/>
+		  </div>
+		  <div style={{ marginTop: "12px" }}>
+			<label style={S.label}>Backgrounds to REJECT (optional)</label>
+			<input
+			  style={{ ...S.input, marginTop: "4px" }}
+			  placeholder="e.g. Pure tech companies, Government only, Sales background"
+			  value={ans.domain_reject}
+			  onChange={e => setA("domain_reject", e.target.value)}
+			/>
+		  </div>
+		</div>
+	  );
+	};
 
   const renderQ3 = () => {
     const skills = parsedSkills.length > 0 ? parsedSkills : [];
@@ -4915,38 +5101,40 @@ Keep it under 300 words. Be specific and direct. Write for a recruiter who will 
     );
   };
 
-  const renderQ4 = () => {
-    const skills = parsedSkills.length > 0 ? parsedSkills : [];
-    return (
-      <div>
-        {qLabel("Are there any skills in the JD that are NOT really important?")}
-        {qSub("We'll reduce their weight in matching. This step is optional — skip if all skills matter.")}
-        {skills.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-            {skills.map(s => (
-              <span
-                key={s}
-                onClick={() => toggleArr("irrelevant", s)}
-                style={chip(ans.irrelevant.includes(s), C.error, "rgba(224,92,92,0.08)")}
-              >
-                {ans.irrelevant.includes(s) && <Icon n="block" size={12} color={C.error} />}
-                {" "}{s}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <div style={{
-            padding: "12px 14px", borderRadius: "10px",
-            backgroundColor: C.surface, border: `1px solid ${C.border}`,
-            fontSize: "12px", color: C.muted,
-          }}>
-            No skills extracted from JD — this step can be skipped
-          </div>
-        )}
-        {hint("Tap a skill to mark it as low priority. Tap again to unmark.")}
-      </div>
-    );
-  };
+// ─── HIRING BRIEF FLOW — RENDER Q4 ───────────────────────────────────────────
+
+	const renderQ4 = () => {
+	  const skills = parsedSkills.length > 0 ? parsedSkills : [];
+	  return (
+		<div>
+		  {qLabel("Are there any skills that are good to have but not essential?")}
+		  {qSub("These will get a small score bonus in matching but won't block a candidate who's missing them. Skip if all selected skills are must-haves.")}
+		  {skills.length > 0 ? (
+			<div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+			  {skills.map(s => (
+				<span
+				  key={s}
+				  onClick={() => toggleArr("good_to_have", s)}
+				  style={chip(ans.good_to_have.includes(s), C.similar, "rgba(217,119,6,0.08)")}
+				>
+				  {ans.good_to_have.includes(s) && <Icon n="thumb_up" size={12} color={C.similar} />}
+				  {" "}{s}
+				</span>
+			  ))}
+			</div>
+		  ) : (
+			<div style={{
+			  padding: "12px 14px", borderRadius: "10px",
+			  backgroundColor: C.surface, border: `1px solid ${C.border}`,
+			  fontSize: "12px", color: C.muted,
+			}}>
+			  No skills extracted from JD — this step can be skipped
+			</div>
+		  )}
+		  {hint("Tap a skill to mark it as good to have. These feed the bonus tier in skill scoring.")}
+		</div>
+	  );
+	};
 
   const renderQ5 = () => (
     <div>
@@ -6673,8 +6861,10 @@ function QualitySplitButton({ running, onScore, label, color, borderColor }) {
 }
 
 // ─── QUALITY BADGE ────────────────────────────────────────────────────────────
+
 function QualityBadge({ label, score, rationale }) {
-  const [hovered, setHovered] = useState(false);
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
 
   const cfg = {
     "Strong fit":   { text: "#3B6D11", bg: "#EAF3DE" },
@@ -6683,11 +6873,17 @@ function QualityBadge({ label, score, rationale }) {
   };
   const c = cfg[label] || { text: C.muted, bg: C.surface };
 
+  const showTooltip = () => {
+    if (!ref.current || score == null) return;
+    const rect = ref.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 6, left: rect.left + rect.width / 2 });
+  };
+
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    <div style={{ display: "inline-block" }} ref={ref}>
       <span
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={showTooltip}
+        onMouseLeave={() => setPos(null)}
         style={{
           display: "inline-flex", alignItems: "center", gap: 5,
           padding: "3px 10px", borderRadius: 999,
@@ -6699,14 +6895,13 @@ function QualityBadge({ label, score, rationale }) {
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.text, flexShrink: 0 }} />
         {label}
       </span>
-
-      {hovered && score != null && (
+      {pos && score != null && (
         <div style={{
-          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+          position: "fixed", top: pos.top, left: pos.left,
           transform: "translateX(-50%)",
           background: C.white, border: `1px solid ${C.borderMid}`,
           borderRadius: 10, padding: "10px 14px",
-          minWidth: 200, maxWidth: 240, zIndex: 200,
+          minWidth: 200, maxWidth: 240, zIndex: 9999,
           boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
           fontFamily: fontB, pointerEvents: "none",
         }}>
@@ -6716,11 +6911,90 @@ function QualityBadge({ label, score, rationale }) {
           </div>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Quality score</div>
           {rationale && (
-            <div style={{
-              fontSize: 12, color: C.muted, lineHeight: 1.5,
-              borderTop: `1px solid ${C.border}`, paddingTop: 6,
-            }}>
+            <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
               {rationale}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── MATCH PILL WITH TOOLTIP ──────────────────────────────────────────────────
+
+function MatchPillWithTooltip({ c, project }) {
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+  const dtl = domainTierLabel(c.domain_score);
+
+  const showTooltip = () => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
+  };
+
+  return (
+    <div ref={ref} style={{ display: "inline-block" }}
+      onMouseEnter={showTooltip}
+      onMouseLeave={() => setPos(null)}
+    >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", cursor: "default" }}>
+        <div style={{ fontSize: "17px", fontWeight: "800", fontFamily: fontH, color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error }}>
+          {Math.round(c.match_score * 100)}
+        </div>
+        <div style={{ fontSize: "9px", color: C.muted, fontWeight: "700", textTransform: "uppercase" }}>match</div>
+      </div>
+      {pos && (
+        <div style={{
+          position: "fixed", top: pos.top, left: pos.left,
+          transform: "translateX(-50%)",
+          background: C.white, border: `1px solid ${C.borderMid}`,
+          borderRadius: 12, padding: "14px 16px",
+          width: 260, zIndex: 9999,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+          fontFamily: fontB, pointerEvents: "none",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, paddingBottom: 10, borderBottom: `1px solid ${C.border}` }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: fontH, color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error, lineHeight: 1 }}>
+                {Math.round(c.match_score * 100)}%
+              </div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Overall match</div>
+            </div>
+            {dtl && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: dtl.bg, color: dtl.color, whiteSpace: "nowrap" }}>
+                {dtl.label}
+              </span>
+            )}
+          </div>
+          {[
+            { label: "Skills",     val: c.skill_score,      color: C.success, sub: null },
+            { label: "Semantic",   val: c.vector_score,     color: C.primary, sub: null },
+            { label: "Experience", val: c.experience_score, color: C.similar, sub: c.experience_delta != null && c.experience_delta !== 0 ? `${c.experience_delta > 0 ? "+" : ""}${c.experience_delta}yr vs band` : "Within band" },
+            { label: "Domain",     val: c.domain_score,     color: C.info,    sub: null },
+          ].filter(r => r.val != null).map(r => (
+            <div key={r.label} style={{ marginBottom: r.sub ? 2 : 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 11, color: C.muted, width: 68, flexShrink: 0 }}>{r.label}</div>
+                <div style={{ flex: 1, height: 4, background: C.surface, borderRadius: 3 }}>
+                  <div style={{ height: 4, borderRadius: 3, background: r.color, width: `${Math.round(r.val * 100)}%` }} />
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: r.color, minWidth: 30, textAlign: "right" }}>
+                  {Math.round(r.val * 100)}%
+                </div>
+              </div>
+              {r.sub && <div style={{ fontSize: 10, color: C.muted, marginLeft: 76, marginBottom: 6 }}>{r.sub}</div>}
+            </div>
+          ))}
+          {c.matching_skills?.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 4 }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Matched skills</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {c.matching_skills.map(s => (
+                  <span key={s} style={{ fontSize: 10, padding: "1px 7px", borderRadius: 6, background: C.surface, color: C.textMid }}>{s}</span>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -7259,7 +7533,7 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
     backgroundColor: C.white,
     borderRadius: "14px",
     border: `1px solid ${C.border}`,
-    overflowX: "auto",
+    overflowX: "auto",	
   }}
 >
   <table style={S.table}>
@@ -7319,22 +7593,31 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
             )} 
 
                     {/* Match % */}
-                    <td style={{ ...S.td, width: "60px", textAlign: "center" }}>
-                      {c.match_score != null ? (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
-                          <div style={{ fontSize: "17px", fontWeight: "800", fontFamily: fontH, color: c.match_score >= 0.70 ? C.success : c.match_score >= 0.50 ? C.similar : C.error }}>
-                            {Math.round(c.match_score * 100)}
-                          </div>
-                          <div style={{ fontSize: "9px", color: C.muted, fontWeight: "700", textTransform: "uppercase" }}>match</div>
-                        </div>
-                      ) : <span style={{ fontSize: "13px", color: C.muted }}>—</span>}
-                    </td>
+					<td style={{ ...S.td, width: "60px", textAlign: "center" }}>
+						{c.match_score != null
+							? <MatchPillWithTooltip c={c} project={project} />
+							: <span style={{ fontSize: "13px", color: C.muted }}>—</span>}
+					</td>
 
-                    {/* Name */}
-                    <td style={{ ...S.td, maxWidth: "180px" }}>
-                      <div style={{ fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || "—"}</div>
-                      <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_company || "—"}</div>
-                    </td>
+					{/* Name */}
+					<td style={{ ...S.td, maxWidth: "180px" }}>
+					  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+						<div style={{ fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+						  {c.name || "—"}
+						</div>
+						{c.tier1_institute && (
+						  <span title="Tier 1 Institute" style={{
+							fontSize: "9px", fontWeight: "800", padding: "1px 5px",
+							borderRadius: "4px", backgroundColor: C.primaryDim,
+							color: C.primary, flexShrink: 0, fontFamily: font,
+							letterSpacing: "0.04em",
+						  }}>T1</span>
+						)}
+					  </div>
+					  <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+						{c.current_company || "—"}
+					  </div>
+					</td>
 
                     {/* Designation */}
                     <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -7351,17 +7634,126 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                       {c.location || "—"}
                     </td>
 
-                    {/* Score breakdown */}
-                    <td style={S.td}>
-                      {c.match_score != null ? (
-                        <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                          <ScorePill label="Skill" value={c.skill_score ?? 0} color={C.success} />
-                          <ScorePill label="Sem"   value={c.vector_score ?? 0} color={C.primary} />
-                          <ScorePill label="Exp"   value={c.experience_score ?? 0} color={C.similar} />
-                          {c.domain_score != null && <ScorePill label="Dom" value={c.domain_score} color={C.info} />}
-                        </div>
-                      ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
-                    </td>
+					{/* Score breakdown */}
+					<td style={S.td}>
+					  {c.match_score != null ? (
+						<div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+
+						  {/* Skill pill */}
+						  <ScorePill
+							label="Skill"
+							value={c.skill_score ?? 0}
+							color={C.success}
+							tooltipContent={(() => {
+							  const mustHaves = project.must_have_skills ?? [];
+							  const matched   = c.matching_skills ?? [];
+							  const missing   = mustHaves.filter(s =>
+								!matched.some(m =>
+								  m.toLowerCase().includes(s.toLowerCase()) ||
+								  s.toLowerCase().includes(m.toLowerCase())
+								)
+							  );
+							  const goodTotal = project.good_to_have_skills?.length ?? 0;
+							  return (
+								<div>
+								  <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Skill breakdown</div>
+
+								  {/* FIX 1: only show must-have bar when mustHaves is populated */}
+								  {mustHaves.length > 0 && (
+									<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+									  <div style={{ fontSize: 11, color: C.muted, width: 90 }}>Must-have</div>
+									  <div style={{ flex: 1, height: 4, background: C.surface, borderRadius: 3 }}>
+										<div style={{ height: 4, borderRadius: 3, background: C.success, width: `${Math.round(((mustHaves.length - missing.length) / mustHaves.length) * 100)}%` }} />
+									  </div>
+									  <div style={{ fontSize: 11, fontWeight: 700, color: C.success, minWidth: 28, textAlign: "right" }}>
+										{mustHaves.length - missing.length}/{mustHaves.length}
+									  </div>
+									</div>
+								  )}
+
+								  {goodTotal > 0 && (
+									<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+									  <div style={{ fontSize: 11, color: C.muted, width: 90 }}>Good to have</div>
+									  <div style={{ flex: 1, height: 4, background: C.surface, borderRadius: 3 }}>
+										<div style={{ height: 4, borderRadius: 3, background: C.similar, width: `${Math.round(((c.good_matched ?? 0) / goodTotal) * 100)}%` }} />
+									  </div>
+									  <div style={{ fontSize: 11, fontWeight: 700, color: C.similar, minWidth: 28, textAlign: "right" }}>
+										{c.good_matched ?? 0}/{goodTotal}
+									  </div>
+									</div>
+								  )}
+
+								  {matched.length > 0 && (
+									<div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 6 }}>
+									  <div style={{ fontSize: 10, color: C.muted, marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Matched</div>
+									  <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+										{matched.map(s => <span key={s} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 5, background: "#EAF3DE", color: "#3B6D11" }}>{s}</span>)}
+									  </div>
+									</div>
+								  )}
+
+								  {missing.length > 0 && (
+									<div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 6 }}>
+									  <div style={{ fontSize: 10, color: C.muted, marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Missing</div>
+									  <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+										{missing.map(s => <span key={s} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 5, background: "#FCEBEB", color: "#A32D2D" }}>{s}</span>)}
+									  </div>
+									</div>
+								  )}
+
+								  {/* FIX 2: fallback when no skills data at all */}
+								  {mustHaves.length === 0 && matched.length === 0 && (
+									<div style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>
+									  Skills not configured on this project
+									</div>
+								  )}
+								</div>
+							  );
+							})()}
+						  />
+
+						  {/* Sem pill — no tooltip */}
+						  {/* FIX 3: tooltip opens downward */}
+						  <ScorePill label="Sem" value={c.vector_score ?? 0} color={C.primary} />
+
+						  {/* Exp pill — no tooltip */}
+						  <ScorePill label="Exp" value={c.experience_score ?? 0} color={C.similar} />
+
+						  {/* Domain pill */}
+						  {c.domain_score != null && (() => {
+							const dtl = domainTierLabel(c.domain_score);
+							return (
+							  <ScorePill
+								label="Dom"
+								value={c.domain_score}
+								color={C.info}
+								tooltipContent={dtl ? (
+								  <div>
+									<div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Domain breakdown</div>
+									<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+									  <span style={{ fontSize: 11, color: C.muted }}>Tier</span>
+									  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: dtl.bg, color: dtl.color }}>
+										{dtl.label}
+									  </span>
+									</div>
+									<div style={{ fontSize: 11, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 8, lineHeight: 1.6 }}>
+									  {c.domain_score >= 1.0                           && "Matches ideal sector and sub-domain exactly."}
+									  {c.domain_score >= 0.90 && c.domain_score < 1.0 && "Matches adjacent sub-domain within ideal sector."}
+									  {c.domain_score >= 0.70 && c.domain_score < 0.90 && "Right sector but not the target sub-domain."}
+									  {c.domain_score >= 0.55 && c.domain_score < 0.70 && "Acceptable sector with preferred sub-domain match."}
+									  {c.domain_score >= 0.45 && c.domain_score < 0.55 && "Acceptable sector — broader background."}
+									  {c.domain_score >= 0.35 && c.domain_score < 0.45 && "Acceptable sector — company type match only."}
+									  {c.domain_score  < 0.35                          && "No meaningful domain alignment found."}
+									</div>
+								  </div>
+								) : null}
+							  />
+							);
+						  })()}
+
+						</div>
+					  ) : <span style={{ fontSize: "12px", color: C.muted }}>—</span>}
+					</td>
 
                     {/* Quality */}
                     <td style={{ ...S.td, textAlign: "center" }}>
@@ -7373,19 +7765,37 @@ function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
                     {/* Source */}
                     <td style={S.td}><span style={S.badge(badge.type)}>{badge.label}</span></td>
 
-                    {/* Actions */}
-                    <td style={{ ...S.td, whiteSpace: "nowrap" }}>
-                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                        <button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}><Icon n="person" size={12} />View</button>
-                        <button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}><Icon n="hub" size={12} />Similar</button>
-                        {poolTab === "applied" && (
-                          <button style={{ ...S.btn("outline", true), fontSize: "11px" }} onClick={() => handleAddCandidate(c.candidate_id)}><Icon n="add" size={12} /> Add to Matched</button>
-                        )}
-                        {c.is_active
-                          ? <button style={S.btn("danger", true)} onClick={() => setRemoveConfirm(c)}>Remove</button>
-                          : <button style={S.btn("success", true)} onClick={() => restoreCand(c.candidate_id)}>Restore</button>}
-                      </div>
-                    </td>
+					{/* Actions */}
+					<td style={{ ...S.td, whiteSpace: "nowrap" }}>
+					  <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+						<button style={S.btn("outline", true)} onClick={() => viewCandidate(c.candidate_id)}>
+						  <Icon n="person" size={12} />View
+						</button>
+						<button className="similar-btn" style={S.btn("similar", true)} onClick={() => openSimilarWindow({ id: c.candidate_id, name: c.name })}>
+						  <Icon n="hub" size={12} />Similar
+						</button>
+						{poolTab === "applied" && (
+						  <button style={{ ...S.btn("outline", true), fontSize: "11px" }} onClick={() => handleAddCandidate(c.candidate_id)}>
+							<Icon n="add" size={12} />Match
+						  </button>
+						)}
+						{c.is_active
+						  ? (
+							<button
+							  title="Remove candidate"
+							  style={{ ...S.btn("outline", true), padding: "6px 8px", color: C.error, borderColor: "rgba(224,92,92,0.3)" }}
+							  onClick={() => setRemoveConfirm(c)}
+							>
+							  <Icon n="delete" size={14} color={C.error} />
+							</button>
+						  )
+						  : (
+							<button style={S.btn("success", true)} onClick={() => restoreCand(c.candidate_id)}>
+							  <Icon n="undo" size={12} />Restore
+							</button>
+						  )}
+					  </div>
+					</td>
                   </tr>
                 );
               })}
@@ -8615,7 +9025,7 @@ function ClientProjectDetailPage({ project, onBack }) {
             backgroundColor: C.white,
             borderRadius: "14px",
             border: `1px solid ${C.border}`,
-            overflow: "hidden",
+            overflowX: "auto",
           }}
         >
           <table style={S.table}>
