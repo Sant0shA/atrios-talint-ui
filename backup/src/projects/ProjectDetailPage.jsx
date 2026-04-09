@@ -47,6 +47,8 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
   const [selectedIds,      setSelectedIds]    = useState(new Set());
   const [bulkRemoveConfirm, setBulkRemoveConfirm] = useState(false);
   const [bulkRemoving,     setBulkRemoving]   = useState(false);
+  const [statusDropdown,   setStatusDropdown] = useState(false);
+  const [statusSaving,     setStatusSaving]   = useState(false);
 
   const applyUrl = `${window.location.origin}/apply/${project.apply_slug}`;
 
@@ -59,6 +61,25 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
   };
 
   useEffect(() => { fetchCandidates(); }, [project.id]);
+
+	useEffect(() => {
+	  if (!statusDropdown) return;
+	  const close = () => setStatusDropdown(false);
+	  const timer = setTimeout(() => {
+		document.addEventListener("click", close);
+	  }, 0);
+	  return () => {
+		clearTimeout(timer);
+		document.removeEventListener("click", close);
+	  };
+	}, [statusDropdown]);
+
+  useEffect(() => {
+    if (!statusDropdown) return;
+    const close = () => setStatusDropdown(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [statusDropdown]);
 
   const switchTab = (tab) => {
     setPoolTab(tab); setQualityFilter("all");
@@ -114,6 +135,19 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
   const toggleApplyLink = async () => {
     const r = await apiFetch(`/api/v1/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ apply_enabled: !project.apply_enabled }) });
     if (r.ok) setProject(p => ({ ...p, apply_enabled: !p.apply_enabled }));
+  };
+
+  const changeStatus = async (newStatus) => {
+    setStatusDropdown(false);
+    if (newStatus === project.status) return;
+    setStatusSaving(true);
+    const r = await apiFetch(`/api/v1/projects/${project.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (r.ok) setProject(p => ({ ...p, status: newStatus,
+      apply_enabled: newStatus === "closed" ? false : p.apply_enabled }));
+    setStatusSaving(false);
   };
 
   const viewCandidate = async (candidateId) => {
@@ -188,12 +222,74 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
             Created {fmtDate(project.created_at)}{project.last_matched_at && ` · Last matched ${fmtDate(project.last_matched_at)}`}
           </div>
         </div>
+
+        {/* Status pill + dropdown */}
+        {!project.is_archived && (() => {
+          const statusMap = {
+            active:  { bg: "#e8f7ef", color: "#1a6e40", dot: C.success, label: "Active"  },
+            on_hold: { bg: "#fef3cd", color: "#9a6700", dot: C.similar,  label: "On hold" },
+            closed:  { bg: "#fde8e8", color: "#c0392b", dot: C.error,    label: "Closed"  },
+          };
+          const s = statusMap[project.status] || statusMap.active;
+          return (
+            <div style={{ position: "relative", marginTop: "2px" }} onClick={e => e.stopPropagation()}>
+              <button
+                onClick={(e) => { e.stopPropagation(); setStatusDropdown(v => !v); }}
+                disabled={statusSaving}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6,
+                  background: s.bg, color: s.color, fontSize: 12, fontWeight: 700,
+                  padding: "5px 11px", borderRadius: 20, border: `1px solid ${s.color}30`,
+                  cursor: "pointer", opacity: statusSaving ? 0.6 : 1, transition: "opacity 0.15s" }}>
+                {statusSaving
+                  ? <div style={{ width: 8, height: 8, borderRadius: "50%",
+                      border: `2px solid ${s.color}`, borderTopColor: "transparent",
+                      animation: "spin 0.7s linear infinite" }} />
+                  : <span style={{ width: 7, height: 7, borderRadius: "50%",
+                      background: s.dot, display: "inline-block" }} />}
+                {s.label}
+                <Icon n="expand_more" size={14} color={s.color} />
+              </button>
+              {statusDropdown && (
+                <div onClick={e => e.stopPropagation()}
+                  style={{ position: "absolute", top: "calc(100% + 6px)", left: 0,
+                    background: C.white, border: `1px solid ${C.border}`, borderRadius: 10,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.10)", minWidth: 140, zIndex: 300, overflow: "hidden" }}>
+                  {[
+                    { v: "active",  label: "Active",  dot: C.success },
+                    { v: "on_hold", label: "On hold", dot: C.similar },
+                    { v: "closed",  label: "Closed",  dot: C.error   },
+                  ].map(opt => (
+                    <button key={opt.v} onClick={() => changeStatus(opt.v)}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 9,
+                        padding: "9px 13px", background: project.status === opt.v ? C.surface : "none",
+                        border: "none", cursor: "pointer", fontSize: 13, color: C.text,
+                        fontFamily: fontB, textAlign: "left", fontWeight: project.status === opt.v ? 700 : 400 }}
+                      onMouseEnter={e => { if (project.status !== opt.v) e.currentTarget.style.background = C.surface; }}
+                      onMouseLeave={e => { if (project.status !== opt.v) e.currentTarget.style.background = "none"; }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%",
+                        background: opt.dot, display: "inline-block", flexShrink: 0 }} />
+                      {opt.label}
+                      {project.status === opt.v && <Icon n="check" size={13} color={C.primary} style={{ marginLeft: "auto" }} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {reportAvailable && !project.is_archived && (
             <button style={S.btn("outline", true)} onClick={() => setShowReport(true)}><Icon n="summarize" size={13} />Generate Report</button>
           )}
           {!project.is_archived && (
-            <button style={S.btn("outline", true)} onClick={() => setShowBulkUpload(true)}><Icon n="upload_file" size={13} />Upload CVs</button>
+            <button
+              style={{ ...S.btn("outline", true), opacity: project.status === "closed" ? 0.4 : 1,
+                cursor: project.status === "closed" ? "not-allowed" : "pointer" }}
+              onClick={() => { if (project.status !== "closed") setShowBulkUpload(true); }}
+              title={project.status === "closed" ? "Project is closed" : undefined}>
+              <Icon n="upload_file" size={13} />Upload CVs
+            </button>
           )}
           {!project.is_archived && (
             <QualitySplitButton running={qualityRunning} onScore={runQualityScore} label="Quality Check" />
@@ -206,6 +302,16 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
           </button>
         </div>
       </div>
+
+      {/* Closed project banner */}
+      {project.status === "closed" && (
+        <div style={{ background: "#fde8e8", border: "1px solid rgba(224,92,92,0.25)",
+          borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
+          fontSize: "13px", color: "#c0392b", display: "flex", alignItems: "center", gap: "8px" }}>
+          <Icon n="block" size={15} color="#c0392b" />
+          This project is closed. Apply link and CV uploads are disabled.
+        </div>
+      )}
 
       {/* Match panel */}
       {showMatchPanel && !project.is_archived && (
@@ -267,8 +373,14 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
         <button style={S.btn("outline", true)} onClick={() => { navigator.clipboard.writeText(applyUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
           <Icon n={copiedLink ? "check" : "content_copy"} size={13} />{copiedLink ? "Copied!" : "Copy"}
         </button>
-        <button style={S.btn(project.apply_enabled ? "danger" : "success", true)} onClick={toggleApplyLink}>
-          <Icon n={project.apply_enabled ? "link_off" : "link"} size={13} />{project.apply_enabled ? "Disable Link" : "Enable Link"}
+        <button
+          style={{ ...S.btn(project.apply_enabled ? "danger" : "success", true),
+            opacity: project.status === "closed" ? 0.4 : 1,
+            cursor: project.status === "closed" ? "not-allowed" : "pointer" }}
+          onClick={() => { if (project.status !== "closed") toggleApplyLink(); }}
+          title={project.status === "closed" ? "Project is closed" : undefined}>
+          <Icon n={project.apply_enabled ? "link_off" : "link"} size={13} />
+          {project.apply_enabled ? "Disable Link" : "Enable Link"}
         </button>
       </div>
 

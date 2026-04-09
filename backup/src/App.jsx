@@ -14,6 +14,7 @@ import ProjectsTab from "./projects/ProjectsTab";
 import ClientPortal from "./portal/ClientPortal";
 import ApplyPage from "./pages/ApplyPage";
 import ReportPrintView from "./projects/ReportPrintView";
+import DashboardTab from "./tabs/DashboardTab";
 
 // ─── CSS injection — fonts, animations, scrollbar, class names ────────────────
 // fade-up, dot-wave, similar-btn, resource-card, stat-card, log-row, mobile-nav
@@ -72,11 +73,12 @@ if (typeof document !== "undefined") {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user,        setUser]        = useState(getUser);
-  const [tab,         setTab]         = useState("search");
-  const [showChangePw,setShowChangePw]= useState(false);
-  const [modalCand,   setModalCand]   = useState(null);
-  const [projectsKey, setProjectsKey] = useState(0); // increments on Projects click → resets to list view
+  const [user,           setUser]           = useState(getUser);
+  const [tab,            setTab]            = useState("dashboard");
+  const [showChangePw,   setShowChangePw]   = useState(false);
+  const [modalCand,      setModalCand]      = useState(null);
+  const [projectsKey,    setProjectsKey]    = useState(0);
+  const [directProjectId, setDirectProjectId] = useState(null);
   const isMobile = useIsMobile();
 
   // ── Hash routing (opens in new window) ──────────────────────────────────────
@@ -108,6 +110,7 @@ export default function App() {
 
   // ── Internal recruiter / admin app ──────────────────────────────────────────
   const tabs = [
+    { key: "dashboard", icon: "dashboard",     label: "Dashboard" },
     { key: "search",    icon: "search",        label: "Search"    },
     { key: "upload",    icon: "upload_file",   label: "Upload"    },
     { key: "projects",  icon: "work",          label: "Projects"  },
@@ -118,8 +121,17 @@ export default function App() {
 
   // Incrementing projectsKey forces ProjectsTab remount → resets to list view
   const handleTabClick = (key) => {
-    if (key === "projects") setProjectsKey(k => k + 1);
+    if (key === "projects") {
+      setProjectsKey(k => k + 1);
+      setDirectProjectId(null); // clear any dashboard-driven navigation
+    }
     setTab(key);
+  };
+
+  const goToProject = (projectId) => {
+    setDirectProjectId(projectId);
+    setProjectsKey(k => k + 1);
+    setTab("projects");
   };
 
   return (
@@ -181,9 +193,10 @@ export default function App() {
 
       {/* ── Main content ── */}
       <main style={isMobile ? S.mainMobile : S.main}>
+        {tab === "dashboard" && <DashboardTab user={user} onGoToProject={goToProject} />}
         {tab === "search"    && <SearchTab onViewCandidate={setModalCand} />}
         {tab === "upload"    && <UploadTab onViewCandidate={setModalCand} />}
-        {tab === "projects"  && <ProjectsTab key={projectsKey} onViewCandidate={setModalCand} />}
+        {tab === "projects"  && <ProjectsTab key={projectsKey} onViewCandidate={setModalCand} directProjectId={directProjectId} />}
         {tab === "resources" && <ResourcesTab isAdmin={user.role === "admin"} />}
         {tab === "admin"     && user.role === "admin" && <AdminTab />}
       </main>

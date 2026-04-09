@@ -8,7 +8,7 @@ import Icon from "../components/Icon";
 import CreateProjectModal from "./CreateProjectModal";
 import ProjectDetailPage from "./ProjectDetailPage";
 
-export default function ProjectsTab({ onViewCandidate }) {
+export default function ProjectsTab({ onViewCandidate, directProjectId }) {
   const isMobile = useIsMobile();
   const [view,            setView]           = useState("list");
   const [projects,        setProjects]       = useState([]);
@@ -23,17 +23,19 @@ export default function ProjectsTab({ onViewCandidate }) {
   const [noteMsg,         setNoteMsg]        = useState("");
   const [openMenuId,      setOpenMenuId]     = useState(null);
   const [archiving,       setArchiving]      = useState(null);
+  const [statusFilter,    setStatusFilter]   = useState("active");
 
-  const fetchProjects = useCallback(async (archived) => {
+  const fetchProjects = useCallback(async (archived, status) => {
     setLoading(true);
     try {
-      const r = await apiFetch(`/api/v1/projects?archived=${archived}`);
+      const statusParam = archived ? "all" : (status || "active");
+      const r = await apiFetch(`/api/v1/projects?archived=${archived}&status=${statusParam}`);
       const d = await r.json();
       setProjects(d.projects || []);
     } catch { setProjects([]); } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchProjects(showArchived); }, [showArchived]);
+  useEffect(() => { fetchProjects(showArchived, statusFilter); }, [showArchived, statusFilter]);
 
   useEffect(() => {
     apiFetch("/api/v1/admin/clients/simple")
@@ -49,6 +51,13 @@ export default function ProjectsTab({ onViewCandidate }) {
     return () => document.removeEventListener("click", close);
   }, [openMenuId]);
 
+  // Auto-open project from dashboard navigation
+  useEffect(() => {
+    if (!directProjectId || projects.length === 0) return;
+    const found = projects.find(p => p.id === directProjectId);
+    if (found) { setSel(found); setView("detail"); }
+  }, [directProjectId, projects]);
+
   const saveNote = async () => {
     setNoteSaving(true); setNoteMsg("");
     try {
@@ -58,7 +67,7 @@ export default function ProjectsTab({ onViewCandidate }) {
       });
       if (r.ok) {
         setNoteMsg("saved");
-        fetchProjects(showArchived);
+        fetchProjects(showArchived, statusFilter);
         setTimeout(() => { setEditingProject(null); setNoteMsg(""); }, 1500);
       } else { setNoteMsg("error"); }
     } catch { setNoteMsg("error"); } finally { setNoteSaving(false); }
@@ -66,13 +75,13 @@ export default function ProjectsTab({ onViewCandidate }) {
 
   const handleArchive = async (e, p) => {
     e.stopPropagation(); setOpenMenuId(null); setArchiving(p.id);
-    try { await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" }); fetchProjects(showArchived); }
+    try { await apiFetch(`/api/v1/projects/${p.id}/archive`, { method: "PATCH" }); fetchProjects(showArchived, statusFilter); }
     finally { setArchiving(null); }
   };
 
   const handleUnarchive = async (e, p) => {
     e.stopPropagation(); setOpenMenuId(null); setArchiving(p.id);
-    try { await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" }); fetchProjects(showArchived); }
+    try { await apiFetch(`/api/v1/projects/${p.id}/unarchive`, { method: "PATCH" }); fetchProjects(showArchived, statusFilter); }
     finally { setArchiving(null); }
   };
 
@@ -86,13 +95,13 @@ export default function ProjectsTab({ onViewCandidate }) {
 
   if (view === "create")
     return <CreateProjectModal
-      onCreated={() => { fetchProjects(showArchived); setView("list"); }}
+      onCreated={() => { fetchProjects(showArchived, statusFilter); setView("list"); }}
       onCancel={() => setView("list")} />;
 
   if (view === "detail" && selProject)
     return <ProjectDetailPage
       project={selProject}
-      onBack={() => { setView("list"); fetchProjects(showArchived); }}
+      onBack={() => { setView("list"); fetchProjects(showArchived, statusFilter); }}
       onViewCandidate={onViewCandidate} />;
 
   const scoreColor = s => s >= 0.7 ? C.success : s >= 0.5 ? C.warning : C.error;
@@ -112,6 +121,24 @@ export default function ProjectsTab({ onViewCandidate }) {
     groupOrder.push({ key: "__none__", label: "No Client Linked", color: C.muted });
   }
 
+  const statusPin = (status) => {
+    const map = {
+      active:  { bg: "#e8f7ef", color: "#1a6e40", dot: C.success, label: "Active"  },
+      on_hold: { bg: "#fef3cd", color: "#9a6700", dot: C.similar,  label: "On hold" },
+      closed:  { bg: "#fde8e8", color: "#c0392b", dot: C.error,    label: "Closed"  },
+    };
+    const s = map[status] || map.active;
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+        background: s.bg, color: s.color, fontSize: 11, fontWeight: 700,
+        padding: "3px 9px", borderRadius: 20, flexShrink: 0 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%",
+          background: s.dot, display: "inline-block" }} />
+        {s.label}
+      </span>
+    );
+  };
+
   const renderProjectCard = (p) => (
     <div key={p.id}
       style={{ backgroundColor: C.white, borderRadius: "12px",
@@ -130,12 +157,16 @@ export default function ProjectsTab({ onViewCandidate }) {
           onClick={e => e.stopPropagation()}>
           ⏰ Inactive 3 months —
           <span style={{ marginLeft: "6px", fontWeight: "700", cursor: "pointer", color: C.primary }} onClick={e => handleArchive(e, p)}>Archive</span>
-          <span style={{ marginLeft: "6px", fontWeight: "700", cursor: "pointer", color: C.muted }} onClick={e => { e.stopPropagation(); fetchProjects(showArchived); }}>Keep</span>
+          <span style={{ marginLeft: "6px", fontWeight: "700", cursor: "pointer", color: C.muted }} onClick={e => { e.stopPropagation(); fetchProjects(showArchived, statusFilter); }}>Keep</span>
         </div>
       )}
 
       <div style={{ fontFamily: fontH, fontSize: "14px", fontWeight: "700", color: C.text, marginBottom: "8px", paddingRight: "24px" }}>
         {p.title}
+      </div>
+
+      <div style={{ marginBottom: "8px" }}>
+        {statusPin(p.status || "active")}
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
@@ -209,11 +240,32 @@ export default function ProjectsTab({ onViewCandidate }) {
         </>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-        <label style={{ fontSize: "13px", color: C.muted, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-          <input type="checkbox" checked={showArchived} onChange={e => setShowArc(e.target.checked)} style={{ accentColor: C.primary }} />
-          Show Archived
-        </label>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+          {[
+            { v: "active",  label: "Active"  },
+            { v: "on_hold", label: "On hold" },
+            { v: "closed",  label: "Closed"  },
+            { v: "all",     label: "All"     },
+          ].map(f => (
+            <span key={f.v}
+              style={{ fontSize: 12, padding: "4px 13px", borderRadius: 20, cursor: "pointer",
+                border: `1px solid ${statusFilter === f.v ? C.primary : C.border}`,
+                background: statusFilter === f.v ? C.primary : C.bg,
+                color: statusFilter === f.v ? "#fff" : C.muted,
+                fontWeight: statusFilter === f.v ? 700 : 400, transition: "all 0.15s",
+                userSelect: "none" }}
+              onClick={() => { setStatusFilter(f.v); setShowArc(false); }}>
+              {f.label}
+            </span>
+          ))}
+          <label style={{ fontSize: "12px", color: C.muted, display: "flex", alignItems: "center", gap: "5px", cursor: "pointer", marginLeft: "6px" }}>
+            <input type="checkbox" checked={showArchived}
+              onChange={e => { setShowArc(e.target.checked); if (e.target.checked) setStatusFilter("all"); }}
+              style={{ accentColor: C.primary }} />
+            Archived
+          </label>
+        </div>
         <button style={S.btn("primary", true)} onClick={() => setView("create")}>
           <Icon n="add" size={14} />New Project
         </button>
