@@ -11,6 +11,21 @@ import { QualitySplitButton, QualityBadge, MatchPillWithTooltip } from "./Qualit
 import BulkCvUploadModal from "./BulkCvUploadModal";
 import GenerateReportModal from "./GenerateReportModal";
 
+// ── Client flag badge ─────────────────────────────────────────────────────────
+// Read-only warning — recruiter sees it, cannot dismiss it (only client can undo).
+function ClientFlagBadge({ flag, reason }) {
+  if (flag !== "not_appropriate") return null;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: "3px",
+      color: "#A32D2D", fontSize: "11px", fontFamily: fontB, fontWeight: "600",
+    }}>
+      <Icon n="flag" size={11} color="#A32D2D" />
+      Client flagged: {reason || "Not appropriate"}
+    </span>
+  );
+}
+
 export default function ProjectDetailPage({ project: initProject, onBack, onViewCandidate }) {
   const isMobile = useIsMobile();
   const [project,          setProject]        = useState(initProject);
@@ -330,6 +345,12 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
                   <div>
                     <div style={{ fontWeight: "700", fontSize: "14px", fontFamily: fontH }}>{c.name || "—"}</div>
                     <div style={{ fontSize: "12px", color: C.muted }}>{[c.current_designation, c.current_company].filter(Boolean).join(" · ") || "—"}</div>
+                    {/* Client flag — mobile */}
+                    {c.client_flag === "not_appropriate" && (
+                      <div style={{ marginTop: "4px" }}>
+                        <ClientFlagBadge flag={c.client_flag} reason={c.client_flag_reason} />
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
                     {c.match_score != null && <span style={{ background: scoreBg(c.match_score), color: scoreColor(c.match_score), padding: "3px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "700" }}>{Math.round(c.match_score * 100)}%</span>}
@@ -383,6 +404,12 @@ export default function ProjectDetailPage({ project: initProject, onBack, onView
                         {c.tier1_institute && <span title="Tier 1 Institute" style={{ fontSize: "9px", fontWeight: "800", padding: "1px 5px", borderRadius: "4px", backgroundColor: C.primaryDim, color: C.primary, flexShrink: 0, fontFamily: font, letterSpacing: "0.04em" }}>T1</span>}
                       </div>
                       <div style={{ fontSize: "11px", color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_company || "—"}</div>
+                      {/* Client flag — desktop, sits under company name in the Name cell */}
+                      {c.client_flag === "not_appropriate" && (
+                        <div style={{ marginTop: "3px" }}>
+                          <ClientFlagBadge flag={c.client_flag} reason={c.client_flag_reason} />
+                        </div>
+                      )}
                     </td>
                     <td style={{ ...S.td, fontSize: "12px", color: C.textMid, maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.current_designation || "—"}</td>
                     <td style={{ ...S.td, fontFamily: font, fontSize: "12px", color: C.primary, fontWeight: "600", whiteSpace: "nowrap" }}>{c.total_experience != null ? `${c.total_experience}y` : "—"}</td>
